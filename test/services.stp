@@ -1,0 +1,2 @@
+T crond.tcl -crontab "%progdir%/../test/crontab.dta" -port 7890 -verbose debug
+T multiplex.tcl -liveness 55

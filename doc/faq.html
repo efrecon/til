@@ -1,0 +1,243 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+
+  
+
+
+  
+  <title>TIL F.A.Q.</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+
+  
+  <meta name="generator" content="WordPress 1.0.1" />
+<!-- leave this for stats -->
+
+
+  
+  <style type="text/css" media="screen">
+@import url( style.css );
+  </style><!-- alternate links removed -->
+</head>
+
+
+<body>
+
+
+<div id="rap">
+<h1 id="header">TIL - The Tcl ICE Library</h1>
+
+
+<div id="content">
+<div class="post">
+<div>
+<h1>TIL F.A.Q.</h1>
+
+
+</div>
+
+
+<div class="storycontent">
+<h2>1. Why is TIL not incorporated to tcllib?</h2>
+
+
+<p>
+There are two reasons for keeping the TIL separate from tcllib.</p>
+
+
+<ul>
+
+
+  <li>The TIL ships both as a number of packages and as a number
+of
+stand-alone utilities. Some of the packages are inter-twined with the
+packages themselves. For example, the socket client package library can
+make direct use of the proxy bridge which is a stand-alone utility.
+tcllib hosts packages only, and the inter connection of the TIL
+packages and utilities would break this design.</li>
+
+
+  <li>The TIL is the direct result of a number of research
+projects and
+making this visible as a separate library was easier than incorporating
+it in the tcllib.</li>
+
+
+</ul>
+
+
+<h2>2. Which platforms does the TIL run on?</h2>
+
+
+<p>The TIL has been coded in a heterogeneous Linux and Windows
+environment. The coding itself has occured on these two platforms, with
+daily migration (and thus testing) of the code. Some initial tests have
+shown that the TIL also works well on the Mac. I welcome any input on
+that platform.</p>
+
+
+<h2>3. The process package does not work on windows, why?</h2>
+
+
+<p>This is because the process package depends on separate
+binaries
+that I cannot redistribute as part of the library. Place the content of
+the <a href="http://www.sysinternals.com/Utilities/PsTools.html">PsTools
+utilities</a> in the process/bin/windows subdirectory and
+everything should be fine. I strongly recommend some of the <a href="http://www.sysinternals.com/Utilities.html">utilities</a>
+that are made available at <a href="http://www.sysinternals.com/">SysInternals</a>
+for those of you running Windows.</p>
+
+
+<h2>4. Which research projects/prototypes has the TIL been used
+in?</h2>
+
+
+<p>Some TIL components originate from <a href="http://www.ercim.org/publication/Ercim_News/enw41/frecon.html">WebPath</a>
+and its successor, <a href="http://www.ercim.org/publication/Ercim_News/enw46/frecon.html">WebPR</a>.&nbsp;New
+components and the extreme componentisation approach came to birth
+during the course of the <a href="http://ada.sics.se/newice/archives/000291.html">mBlog</a>
+project. At that time, the TIL was not a library per-se and was not
+distinctly organised as packages. Putting it all together as packages
+occured when working on the <a href="http://ada.sics.se/newice/archives/000751.html">Teknorama
+station</a> that was on display at the <a href="http://www.tekniskamuseet.se/templates/StartPage.aspx?id=13327">national
+museum of science and technology</a>
+for a number of months. Putting it all together and creating a
+SourceForge project around it is a direct dissemination result of the <a href="http://daphne.sics.se/">DAPHNE project</a>.&nbsp;Since then, TIL has been used in a number of prototypes and installations: the <a href="http://www.tii.se/v4m/is/is_info.htm">interactive salon</a> <a href="http://www.sics.se/research/article.php?newsid=608">reuses</a> part of the Teknorama station, the pondcaster (see <a href="http://www.ercim.org/publication/Ercim_News/EN67.pdf">latest ERCIM news</a>) provides a social and collaborative approach to podcast searching, browsing and consuming.</p>
+
+
+</div>
+
+
+</div>
+
+
+</div>
+
+
+<div id="menu">
+<ul>
+
+
+  <li id="wordpress">main
+    
+    <ul>
+
+
+      <li><a href="main.html">overview</a> </li>
+
+
+      <li><a href="http://www.sf.net/projects/til">Project
+@ sf</a></li>
+
+
+    
+    </ul>
+
+
+  </li>
+
+
+  <li id="wordpress">Support
+    
+    <ul>
+
+
+      <li><a href="faq.html"><span style="text-decoration: underline;">faq</span></a></li>
+
+
+      <li><a href="components.html">components</a></li>
+
+
+      <li><a href="manual.html">manual</a></li>
+
+
+    
+    </ul>
+
+
+  </li>
+
+
+  <li id="wordpress">Download
+    
+    <ul>
+
+
+      <li><a href="license.html">license</a></li>
+
+
+      <li><a href="http://prdownloads.sourceforge.net/til/til.1.2.tgz?download">latest</a></li>
+
+
+      <li><a href="http://sourceforge.net/cvs/?group_id=146459">current</a></li>
+
+
+      <li><a href="http://sourceforge.net/project/showfiles.php?group_id=146459">releases</a></li>
+
+
+    
+    </ul>
+
+
+  </li>
+
+
+  <li id="wordpress">Feedback
+    
+    <ul>
+
+
+      <li><a href="http://sourceforge.net/tracker/?group_id=146459&amp;atid=765300">bugs
+list</a></li>
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765300">submit
+bug</a></li>
+
+
+      <li><a href="http://sourceforge.net/tracker/?atid=765303&amp;group_id=146459&amp;func=browse">feature
+requests list</a></li>
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765303">Request
+feature</a></li>
+
+
+    
+    </ul>
+
+
+  </li>
+
+
+  <li id="categories">Hosting
+    
+    <ul>
+
+
+      <li><a href="http://sourceforge.net"><img src="http://sourceforge.net/sflogo.php?group_id=146459&amp;type=1" alt="SourceForge Logo" border="0" height="31" width="88" /></a></li>
+
+
+    
+    </ul>
+
+
+  </li>
+
+
+</ul>
+
+
+</div>
+
+
+</div>
+
+
+<p class="credit"><cite>theme by&nbsp;<a href="http://www.alexking.org/software/wordpress/styles/sample.php?wpstyle=blue_green"><span style="text-decoration: underline;"><span style="font-weight: bold;">Chris M</span></span></a><a href="http://wordpress.org" title="Powered by WordPress, state-of-the-art semantic personal publishing platform"><strong></strong></a></cite></p>
+
+
+</body>
+</html>

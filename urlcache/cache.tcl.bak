@@ -1,0 +1,1497 @@
+# cache.tcl --
+#
+#	This modules provides a set of routines open the content of
+#	(local or remote) URLs through a cache system so that the next
+#	opening command will possibly be speeded up.
+#
+# Copyright (c) 2004-2005 by the Swedish Institute of Computer Science.
+#
+# See the file "license.terms" for information on usage and redistribution
+# of this file, and for a DISCLAIMER OF ALL WARRANTIES.
+
+package require Tcl 8.2
+package require logger
+package require diskutil
+package require http 2.2
+package require mimetype
+package require md5
+package require uri
+package require massgeturl
+
+package provide urlcache 1.0
+
+# XXX: Add a file deletion callback and a "can I delete?" callback.
+
+# XXX: Maybe should we be intelligent about servers and timeouts.
+# Increasing the timeout successively until a given limit, and storing
+# this per-information server so that both the prefetching and the
+# fetching share this information.
+
+namespace eval ::urlcache {
+    # Initialise the global state
+    variable UC
+    if {![::info exists UC]} {
+	array set UC {
+	    idgene        0
+	    caches        ""
+	    loglevel      warn
+	    lasturl       ""
+	    lasturl_state ""
+	    pgess_freq    10000
+	    tmp_prefix    "urlcache"
+	    bogus_exts    "mp3"
+	    maxhostconns  0
+	    hosts         ""
+	}
+	variable log [::logger::init urlcache]
+	${log}::setlevel $UC(loglevel)
+    }
+    variable Prefetch
+    if {![::info exists Prefetch]} {
+	array set Prefetch {
+	    timeout   15000
+	    max       10
+	    urls      ""
+	    keys      "mtime mimetype size"
+	}
+    }
+
+    namespace export loglevel new open urlinfo relax delete
+}
+
+
+# ::urlcache::loglevel -- Set/Get current log level.
+#
+#	Set and/or get the current log level for this library.
+#
+# Arguments:
+#	loglvl	New loglevel
+#
+# Results:
+#	Return the current log level
+#
+# Side Effects:
+#	None.
+proc ::urlcache::loglevel { { loglvl "" } } {
+    variable UC
+    variable log
+
+    if { $loglvl != "" } {
+	if { [catch "${log}::setlevel $loglvl"] == 0 } {
+	    set UC(loglevel) $loglvl
+	}
+    }
+
+    return $UC(loglevel)
+}
+
+
+# ::urlcache::__urlinfo_get -- Get (and cache) URL specific information
+#
+#	This routine mainly acts as a cache around URL specific
+#	information such as modification date, size, MIME type, etc.
+#	It provides a unified access to both local files and remote
+#	HTTP URLs and will store information into a cache and return
+#	that information at a later time (as long as it is still in
+#	the cache), unless forced to retrieve information again.
+#
+# Arguments:
+#	url	URL to get information for
+#	key	Key to information (currently mtime, mimetype or size)
+#	force	Force fetching of URL info, even if in cache
+#
+# Results:
+#	Return the value of the requested information or an error.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__urlinfo_get { url key { force 0 } } {
+    variable Prefetch
+    variable log
+
+    ${log}::debug "Requesting $key for $url (force: $force)"
+
+    # Look for URL Information from the cache if available and requested.
+    set idx [lsearch -exact $Prefetch(urls) $url]
+    if { ! $force } {
+	if { $idx >= 0 } {
+	    set varname \
+		"::urlcache::Prefetch_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+
+	    ${log}::debug "Returning \"$key\" directly from prefetch cache"
+	    if { [array names URLInfo $key] != "" } {
+		return $URLInfo($key)
+	    } else {
+		${log}::warn "$key is an unrecognised prefetched information"
+		return ""
+	    }
+	}
+    }
+
+    # Remove all possible information about the URL
+    if { $idx >= 0 } {
+	set Prefetch(urls) [lreplace $Prefetch(urls) $idx $idx]
+	set varname \
+	    "::urlcache::Prefetch_[::md5::md5 -hex $url]"
+	upvar \#0 $varname URLInfo
+	unset URLInfo
+    } else {
+	# Get rid of oldest URL information from the cache if we have
+	# reached the maximum size.
+	if { [llength $Prefetch(urls)] > $Prefetch(max) } {
+	    set oldurl [lindex $Prefetch(urls) 0]
+	    set varname \
+		"::urlcache::Prefetch_[::md5::md5 -hex $oldurl]"
+	    upvar \#0 $varname URLInfo
+	    unset URLInfo
+	    set Prefetch(urls) [lrange $Prefetch(urls) 1 end]
+	}
+    }
+
+    # Now gather information about the URL
+    set varname \
+	"::urlcache::Prefetch_[::md5::md5 -hex $url]"
+    upvar \#0 $varname URLInfo
+    set URLInfo(url) $url
+    if { [string match -nocase "http:/*" $url] } {
+	${log}::notice "Fetching $url to store in prefetch cache"
+	
+	if { [catch {::massgeturl::synchead $url \
+			 -timeout $Prefetch(timeout)} token] == 0 } {
+	    upvar \#0 $token state
+	    if { $state(status) == "ok" } {
+		::urlcache::__urlinfo_store_urlstate $url $token
+	    } else {
+		${log}::warn "Cannot access remote URL: $url,\
+                              error: [::http::error $token]"
+		unset URLInfo
+		::http::cleanup $token
+		return -code error "Error when accessing remote URL \"$url\""
+	    }
+	} else {
+	    ${log}::warn "Cannot access remote URL: $url, error: $token"
+	    unset URLInfo
+	    return -code error "Remote URL \"$url\" cannot be accessed"
+	}
+    } else {
+	${log}::notice "Getting local file $url info for prefetch cache"
+	if { [file readable $url] } {
+	    # MIME Type
+	    set URLInfo(mimetype) [::mimetype::guess $url]
+	    # Modification date
+	    set URLInfo(mtime) [file mtime $url]
+	    # Size
+	    set URLInfo(size) [file size $url]
+	    ${log}::debug "Stored for $url: mimetype: $URLInfo(mimetype)\
+                               mtime: $URLInfo(mtime) size: $URLInfo(size)"
+	} else {
+	    ${log}::warn "Cannot access local file: $url"
+	    unset URLInfo
+	    return -code error "Local file \"$url\" cannot be accessed"
+	}
+    }
+    set URLInfo(ctime) [clock seconds]
+    lappend Prefetch(urls) $url
+
+    if { [array names URLInfo $key] != "" } {
+	return $URLInfo($key)
+    } else {
+	${log}::warn "$key is an unrecognised prefetched information"
+	return ""
+    }
+}
+
+
+# ::urlcache::__urlinfo_store_urlstate -- Analyse ::http:: info
+#
+#	This command analyses the result of a HTTP get (through the
+#	::http:: module) and store the appropriate information in the
+#	global state variable for that URL.
+#
+# Arguments:
+#	url	URL being analysed
+#	token	Token as returned from ::http::geturl
+#	keys	Specific keys to store, empty for all known.
+#
+# Results:
+#	Return the list of keys successfully analysed and stored
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__urlinfo_store_urlstate { url token { keys "" } } {
+    variable log
+    variable Prefetch
+
+    set varname \
+	"::urlcache::Prefetch_[::md5::md5 -hex $url]"
+    upvar \#0 $varname URLInfo
+
+    if { $keys == "" } {
+	set keys $Prefetch(keys)
+    }
+    upvar \#0 $token state
+    set analysed ""
+
+    # MIME type
+    if { [lsearch $keys "mimetype"] >= 0 } {
+	set semicolon [string first ";" $state(type)]
+	if { $semicolon >= 0 } {
+	    set URLInfo(mimetype) \
+		[string range $state(type) 0 [expr $semicolon - 1]]
+	} else {
+	    set URLInfo(mimetype) $state(type)
+	}
+	${log}::debug "Stored for $url: mimetype= $URLInfo(mimetype)"
+	lappend analysed "mimetype"
+    }
+
+    # Modification date
+    if { [lsearch $keys "mtime"] >= 0 } {
+	array set meta $state(meta)
+	set mtime 0
+	if { [array names meta "Last-Modified"] == "Last-Modified" } {
+	    if { [catch "clock scan \"$meta(Last-Modified)\"" \
+		      mtime] == 0 } {
+		lappend analysed "mtime"
+	    } else {
+		${log}::warn \
+		    "Could not understand \"$meta(Last-Modified)\"\
+                         as a date, date parsing error: $mtime"
+		set mtime 0
+	    }
+	} else {
+	    ${log}::warn "URL $url has no date!"
+	}
+	set URLInfo(mtime) $mtime
+	${log}::debug "Stored for $url: mtime= $URLInfo(mtime)"
+    }
+
+    # Size
+    if { [lsearch $keys "size"] >= 0 } {
+	set URLInfo(size) $state(totalsize)
+	if { $state(totalsize) == 0 } {
+	    if { [array names state currentsize] != "" } {
+		set URLInfo(size) $state(currentsize)
+	    }
+	}
+	${log}::debug "Stored for $url: size= $URLInfo(size)"
+	lappend analysed "size"
+    }
+
+    return $analysed
+}
+
+
+# ::urlcache::info -- Return specific cache information
+#
+#	This command return specific information about the cache.  The
+#	current supported keys are: content (the list of URLs in cache
+#	(w/o pending ones)), size (current size of cache (a double)),
+#	maxsize (maximum size of cache), dir (directory of cache),
+#	idxfname (name of index file in directory).
+#
+# Arguments:
+#	id	Identifier of cache
+#	key	Key: content, size, dir, idxfname, maxsize
+#
+# Results:
+#	Return the list of URLs in cache.
+#
+# Side Effects:
+#	None
+proc ::urlcache::info { id { key "" } } {
+    variable UC
+    variable log
+
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to information about this cache.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Construct an interim array with just enough information
+    foreach k [list content size maxsize dir idxfname] {
+	set answer($k) $Cache($k)
+    }
+
+    # Return the array or one of its specific keys.
+    if { $key == "" } {
+	return [array get answer]
+    } else {
+	if { [array names answer $key] != "" } {
+	    return $answer($key)
+	} else {
+	    return ""
+	}
+    }
+
+    return "" ; # Never reached
+}
+
+
+# ::urlcache::urlinfo -- Return URL specific information
+#
+#	This command returns specific information about the URL that
+#	have been placed in the cache.  The current supported keys
+#	are: mtime (the modification time), size (the size of the
+#	file), mimetype (the MIME type of the URL, as returned or as
+#	guessed) and fname (the name of the localcache file).
+#
+# Arguments:
+#	id	Identifier of cache
+#	url	URL to return information for
+#	key	Key: mtime, size, mimetype or fname, empty means a list
+#               ready for an array set command with all key, value pairs.
+#
+# Results:
+#	Return the value, the list or an empty string on errors.
+#
+# Side Effects:
+#	None
+proc ::urlcache::urlinfo { id url { key "" } } {
+    variable UC
+    variable log
+
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to information about this cache.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    set idx [lsearch $Cache(content) $url]
+    if { $idx < 0 } {
+	${log}::warn "$url is not in cache $id"
+	return ""
+    } else {
+	set varname \
+	    "::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	upvar \#0 $varname URLInfo
+
+	# Construct an interim array with just enough information
+	foreach k [list mtime mimetype size ctime] {
+	    set answer($k) $URLInfo($k)
+	}
+	set answer(fname) [file join $Cache(dir) $URLInfo(fname)]
+
+	# Return the array or one of its specific keys.
+	if { $key == "" } {
+	    return [array get answer]
+	} else {
+	    if { [array names answer $key] != "" } {
+		return $answer($key)
+	    } else {
+		return ""
+	    }
+	}
+    }
+
+    return "" ; # Never reached
+}
+
+
+# ::urlcache::__read_index -- Read cache index from disk
+#
+#	This command reads the cache index file from the disk, if
+#	present, and resynchronise the cache to the content of the
+#	index file.
+#
+# Arguments:
+#	id	Identifier of cache to read index from
+#
+# Results:
+#	Return the number of files in cache or -1 on errors.
+#
+# Side Effects:
+#	Will empty the current cache.
+proc ::urlcache::__read_index { id } {
+    variable UC
+    variable log
+
+    # Get to information about this cache.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Attempt to open the cache index description only if it exists
+    # and is readable.
+    if { [file exists $Cache(idxfname)] && [file readable $Cache(idxfname)] } {
+	# Empty current content of cache.
+	::urlcache::__remove_urls $id $Cache(content)
+
+	${log}::info "Reading cache index from $Cache(idxfname)"
+	# Open and read, line by line, to replace the content of the
+	# current cache.
+	if { [catch "::open \"$Cache(idxfname)\"" fdes] == 0 } {
+	    set Cache(size) 0.0
+	    set Cache(content) ""
+	    while { ! [eof $fdes] } {
+		# Each line contains the following information, and in
+		# that order: URL, Time of insertion in the cache,
+		# last modification date of the URL, size in bytes of
+		# the URL, name of the cache file.
+		set line [gets $fdes]
+
+		if { $line != "" } {
+		    set url [lindex $line 0]
+		    set varname \
+			"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+		    upvar \#0 $varname URLInfo
+		    set URLInfo(url) $url
+		    set URLInfo(ctime) [lindex $line 1]
+		    set URLInfo(mtime) [lindex $line 2]
+		    set URLInfo(size) [lindex $line 3]
+		    set URLInfo(fname) [lindex $line 4]
+		    set URLInfo(mimetype) [lindex $line 5]
+
+		    set fullpath [file join $Cache(dir) $URLInfo(fname)]
+		    if { ![file exists $fullpath] \
+			     || ![file readable $fullpath] } {
+			${log}::warn "$fullpath is not accessible, ignoring"
+			unset URLInfo
+		    } else {
+			# Append this URL information to the cache, take the
+			# size into account.
+			lappend Cache(content) $url
+			set Cache(size) [expr {$Cache(size) + $URLInfo(size)}]
+		    }
+		}
+	    }
+	    close $fdes
+	    return [llength $Cache(content)]
+	} else {
+	    ${log}::warn "Error when opening index $Cache(idxfname): $fdes"
+	    return -1
+	}
+    } else {
+	${log}::notice "Cannot read index at $Cache(idxfname)"
+	return -1
+    }
+
+    return ; # Never reached.
+}
+
+
+# ::urlcache::__write_index -- Write cache index to disk
+#
+#	This command write to the disk the index file that fully
+#	describes the current state of a cache.
+#
+# Arguments:
+#	id	Identifier of cache to write index for
+#
+# Results:
+#	Return the number of files in cache or -1 on errors.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__write_index { id } {
+    variable UC
+    variable log
+
+    # Get to information about this cache.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    ${log}::info "Writing cache index to $Cache(idxfname)"
+    # Open and read, line by line, to replace the content of the
+    # current cache.
+    if { [catch "::open \"$Cache(idxfname)\" w" fdes] == 0 } {
+	foreach url $Cache(content) {
+	    set varname \
+		"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+
+	    puts $fdes \
+		"\"$url\" $URLInfo(ctime) $URLInfo(mtime) $URLInfo(size)\
+                 \"$URLInfo(fname)\" \"$URLInfo(mimetype)\""
+	}
+	close $fdes
+	return [llength $Cache(content)]
+    } else {
+	${log}::warn "Error when opening index $Cache(idxfname): $fdes"
+	return -1
+    }
+
+    return ; # Never reached
+}
+
+
+# ::urlcache::__remove_urls -- Remove cache files & info for URLs
+#
+#	This command will remove the information and associated local
+#	files for a number of URLs.
+#
+# Arguments:
+#	id	Identifier of cache to write index for
+#	urls	List of URLs to remove information and files for
+#
+# Results:
+#	Return the number of URL information deleted
+#
+# Side Effects:
+#	Will delete local files, if possible.
+proc ::urlcache::__remove_urls { id urls } {
+    variable UC
+    variable log
+
+    # Get to information about this cache.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Proceed to remove the specified URLs one by one, only if they
+    # are part of the cache.
+    set nb_removed 0
+    foreach url $urls {
+	${log}::debug "Removing file & info for $url from cache $Cache(dir)"
+
+	# Check whether this is a URL contained in the cache.
+	set idx [lsearch $Cache(content) $url]
+	if { $idx >= 0 } {
+	    # If it is delete the file on disk and the information
+	    # about the URL.
+	    set varname \
+		"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+
+	    set fullpath [file join $Cache(dir) $URLInfo(fname)]
+	    if { [catch "file delete $fullpath" err] != 0 } {
+		${log}::warn "Cannot remove \"$URLInfo(fname)\" from\
+		              cache \"$Cache(dir)\"!"
+	    }
+	    
+	    set Cache(size) [expr $Cache(size) - $URLInfo(size)]
+	    unset URLInfo
+	    set Cache(content) [lreplace $Cache(content) $idx $idx]
+	    incr nb_removed
+	} else {
+	    ${log}::warn "Cannot remove \"$url\" from cache \"$Cache(dir)\",\
+                          not in cache!"
+	}
+    }
+
+    return $nb_removed
+}
+
+
+# ::urlcache::__remove_urls -- Remove one cache file & info
+#
+#	This command will remove the information and associated local
+#	files for a given URL.
+#
+# Arguments:
+#	id	Identifier of cache to write index for
+#	url	URL to remove information and file for
+#
+# Results:
+#	Return 1 on success, 0 on failure.
+#
+# Side Effects:
+#	Will delete local files, if possible.
+proc ::urlcache::__remove_url { id url } {
+    return [::urlcache::__remove_urls $id [list $url]]
+}
+
+
+# ::urlcache::__cut_off -- Remove old files when cache is filled
+#
+#	This command will remove the files and information for the
+#	files that are too old and when the cache has reached its
+#	maximum size.  This will remove just as enough files for the
+#	cache to have a size just under the target size.
+#
+# Arguments:
+#	id	Identifier of cache.
+#
+# Results:
+#	Return number of files removed.
+#
+# Side Effects:
+#	Will delete local files, if possible.
+proc ::urlcache::__cut_off { id } {
+    variable UC
+    variable log
+
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    set nb_removed 0
+    if { $Cache(size) > $Cache(maxsize) } {
+	${log}::notice "Cutting off extraneous size from cache \"$Cache(dir)\""
+	
+	# First gather information about all URLs into the u_info variable
+	set u_info ""
+	foreach url $Cache(content) {
+	    set varname \
+		"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+	    
+	    lappend u_info \
+		[list "$URLInfo(url)" $URLInfo(ctime) $URLInfo(size)]
+	}
+
+	# Sort u_info so that the oldest entries will be first in the list.
+	set u_info [lsort -integer -index 1 -increasing $u_info]
+
+	# And construct a list with all the urls that should be removed
+	set to_remove ""
+	set i 0
+	set t_size $Cache(size)
+	while { $t_size > $Cache(maxsize) } {
+	    set u [lindex $u_info $i]
+	    if { $u == "" } {
+		break
+	    }
+	    set url [lindex $u 0]
+	    set size [lindex $u 2]
+	    set t_size [expr $t_size - $size]
+	    lappend to_remove "$url"
+	    incr i
+	}
+
+	# Remove this list of URLs
+	set nb_removed [::urlcache::__remove_urls $id $to_remove]
+    }
+
+    return $nb_removed
+}
+
+
+# ::urlcache::__done_finalise -- Finalise URL retrieval and do callbacks
+#
+#	This command is called when a remote or local URL has been
+#	fetched and when all book-keeping for that URL is finalised.
+#	It calls the callbacks that have been associated to the URL
+#	and remove it from the list of pending URLs.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL fetched
+#	status	Status for the callbacks.
+#	txt	Additional argument for the callbacks.
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__done_finalize {id url status txt} {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Get to the variable containing information for the pending URL.
+    # XXX: should we check that it still exists?
+    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname Pending
+
+    # Deliver successfull callback
+    ${log}::debug "Delivering callbacks for $url"
+    foreach cb $Pending(callbacks) {
+	if { [catch {eval $cb $id {$url} $status {$txt}} err] } {
+	    ${log}::warn "Error when invoking callback on $url: $err"
+	}
+    }
+
+    set idx [lsearch $Cache(pending) $url]
+    if { $idx >= 0 } {
+	set Cache(pending) [lreplace $Cache(pending) $idx $idx]
+    } else {
+	${log}::warn "$url is not registered as pending in cache anymore!"
+    }
+    unset Pending
+}
+
+
+# ::urlcache::__done_success -- Successfull retrieval of URLs
+#
+#	This command is called when a remote or local URL has
+#	successfully been fetched and copied to the local disk.  It
+#	stores information into the cache, fixes the cache size and
+#	delivers appropriate callbacks.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL fetched
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__done_success {id url} {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Get to the variable containing information for the pending URL.
+    # XXX: should we check that it still exists?
+    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname Pending
+
+    # Get to information about the URL
+    set varname \
+	"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname URLInfo
+    
+    # Fill structure with necessary information
+    set URLInfo(url) $url
+    set URLInfo(ctime) [clock seconds]
+    set URLInfo(mtime) [::urlcache::__urlinfo_get $url mtime]
+    set URLInfo(size) [::urlcache::__urlinfo_get $url size]
+    set URLInfo(mimetype) [::urlcache::__urlinfo_get $url mimetype]
+    set URLInfo(fname) $Pending(fname)
+
+    # Cleanup the HTTP information and append the URL to the cache.
+    lappend Cache(content) $url
+    set Cache(size) [expr $Cache(size) + $URLInfo(size)]
+
+    # Clean cache and write new state.
+    ::urlcache::__cut_off $id
+    ::urlcache::__write_index $id
+
+    # Deliver successfull callback
+    __done_finalize $id $url "OK" $Pending(fullpath)
+}
+
+
+# ::urlcache::__done_failure -- Failed retrieval of URLs
+#
+#	This command is called when a remote or local URL has failed
+#	to be fetched and copied to the local disk.  It removes the
+#	local cache file, if possible and delivers appropriate
+#	callbacks.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL fetched
+#	reason	Description of failure
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__done_failure { id url reason} {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Get to the variable containing information for the pending URL.
+    # XXX: should we check that it still exists?
+    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname Pending
+
+    # Remove file from disk
+    catch "file delete \"$Pending(fullpath)\""
+
+    # Deliver failure callback.
+    __done_finalize $id $url "ERROR" $reason
+
+}
+
+# ::urlcache::__url_done -- Store remote URL information
+#
+#	This command is called when a remote URL fetching operation
+#	has ended.  It analyses the answer (success or failure), store
+#	information into the cache, fixes the cache size and delivers
+#	appropriate callbacks. Handles redirects correctly.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL fetched
+#	token	Token as returned by ::http::geturl
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__url_done { id cid url status token } {
+    variable UC
+    variable log
+    
+    # Get to the variable containing information for cache. XXX:
+    # Should we check that the cache still exists?
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Get to the variable containing information for the pending URL.
+    # XXX: should we check that it still exists?
+    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname Pending
+    
+    if { $status == "OK" } {
+	# Give a chance to store size of dynamic pages
+	::urlcache::__urlinfo_store_urlstate $url $token [list size]
+	
+	::urlcache::__done_success $id $url
+    } else {
+	::urlcache::__done_failure $id $url $token
+    }
+}
+
+
+
+# ::urlcache::__file_done -- Store local file information
+#
+#	This command is called when a local file fetching operation
+#	has ended.  It analyses the answer (success or failure), store
+#	information into the cache, fixes the cache size and deliver
+#	appropriate callbacks.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL fetched
+#	in_f	File descriptor of local file opened for reading (source!).
+#	bytes	Total number of bytes transferred
+#	err	Error when copying data between source and destination
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__file_done {id url in_f bytes {err {}} } {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for cache. XXX:
+    # Should we check that the cache still exists?
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Get to the variable containing information for the pending URL.
+    # XXX: should we check that it still exists?
+    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+    upvar \#0 $varname Pending
+    
+    # Close the file descriptor of the files
+    catch "close $in_f"
+    catch "close $Pending(fdes)"
+    ${log}::debug "$url copying completed: $err"
+    
+    # If we managed to copy the content of the remote URL, store into
+    # cache, otherwise delete local file and deliver error.
+    if { [string length $err] == 0 } {
+	::urlcache::__done_success $id $url
+    } else {
+	::urlcache::__done_failure $id $url $err
+    }
+}
+
+
+# ::urlcache::__url_extension -- Guess a smart extension
+#
+#	This command will guess an extension in a smart way for the
+#	local file.
+#
+# Arguments:
+#	url	URL (local or remote) to extract extension from
+#
+# Results:
+#	Returns an extension, without leading dot
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__guess_extension { url } {
+    variable UC
+    variable log
+
+    # First get the MIME type of the URL and pick up the best
+    # extension for that MIME type according to the module.
+    if { [catch {__urlinfo_get $url mimetype} mtype] } {
+	${log}::warn "Could not get MIME type of $url (error was: $mtype),\
+                      will be a bad guess"
+	set mtype ""
+    }
+    set mext ""
+    if { $mtype != "" } {
+	set mext [::mimetype::extension $mtype]
+    }
+    if { $mext == "" } {
+	set mext "tmp"
+    }
+
+    # Now see to have in "fname" the raw file name of the file
+    # contained in the URL.
+    if { [string match -nocase "http:/*" $url] } {
+	set lastslash [string last "/" $url]
+	set fname [string range $url $lastslash end]
+    } else {
+	set fname [file tail $url]
+    }
+
+    if { $fname == "" } {
+	# No file name, return the MIME good guess extension.
+	return $mext
+    } else {
+	# We have a file name, extract its extension and try to see if
+	# it is valid and good to be used.
+	set ext [file extension $fname]
+	if { [string index $ext 0] == "." } {
+	    set ext [string range $ext 1 end]
+	}
+	
+	# Get the list of extensions for this MIME type.  If we don't
+	# have any return the one from the file or the one from the
+	# MIME type guessed at the beginning.  If we have some, check
+	# that this extension is one of the recognised one; if it is,
+	# use it, otherwise, turn back to the default one.
+	set mexts [::mimetype::extensions $mtype]
+	if { $mexts == "" } {
+	    if { $ext != "" } {
+		return $ext
+	    } else {
+		return $mext
+	    }
+	} else {
+	    set idx [lsearch $mexts $ext]
+	    if { $idx >= 0 } {
+		return $ext
+	    } else {
+		# Some extensions are widely wrongly associated to
+		# strange MIME types, keep these as the origin (.mp3,
+		# etc.)
+		set idx [lsearch $UC(bogus_exts) $ext]
+		if { $idx >= 0 } {
+		    return $ext
+		} else {
+		    return $mext
+		}
+	    }
+	}
+    }
+
+    return $mext ; # Never reached
+}
+
+# ::urlcache::__url_open -- Store an URL in cache and return local info
+#
+#	This command will actively store the content of a local file
+#	or of a remote HTTP URL into the cache, if possible.  It will
+#	handle the maximum size of the cache as appropriate and will
+#	deliver a callback when the URL has been read and its data
+#	stored in the cache, or when an error has occured.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL (local or remote) to store
+#	opencb	Callback to call on success/failure
+#
+# Results:
+#	Returns 1 if the fetching process could be initiated, 0 otherwise.
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__url_open { id url opencb } {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Check whether we are already fetching this URL into the cache.
+    # In that case, simply append the callback to the list of
+    # callbacks to call at end.
+    set idx [lsearch $Cache(pending) $url]
+    if { $idx >= 0 } {
+	set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+	upvar \#0 $varname Pending
+
+	lappend Pending(callbacks) $opencb
+	return 1
+    }
+
+    # Decide upon an appropriate extension for the local cache file
+    set ext [::urlcache::__guess_extension $url]
+
+    # Now open the local cache file for writing.
+    set fname [::diskutil::temporary_filename $UC(tmp_prefix) $ext]
+    set fullpath [file join $Cache(dir) $fname]
+    ${log}::debug "Storing content of $url into $fullpath"
+
+    if { [string match -nocase "http:/*" $url] } {
+	if { [catch {::massgeturl::infile $url $fullpath \
+			 [list ::urlcache::__url_done $id]} \
+		  cid] == 0 } {
+	    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname Pending
+
+	    set Pending(type) URL
+	    set Pending(cache) $id
+	    set Pending(url) $url
+	    set Pending(fullpath) $fullpath
+	    set Pending(fname) $fname
+	    set Pending(fdes) ""
+	    set Pending(callbacks) [list $opencb]
+	    set Pending(dn_lastout) [clock clicks -milliseconds]
+
+	    lappend Cache(pending) $url
+	} else {
+	    ${log}::warn "Cannot get content of remote URL $url: $cid"
+	    return 0
+	}
+    } else {
+	if { [catch {::open $fullpath w} fdes] } {
+	    ${log}::warn "Cannot create cache file \"$fullpath\""
+	    return 0
+	}
+	if { [catch "::open $url" src_fdes] == 0 } {
+	    set varname "::urlcache::PendingInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname Pending
+
+	    set Pending(type) FILE
+	    set Pending(cache) $id
+	    set Pending(url) $url
+	    set Pending(fullpath) $fullpath
+	    set Pending(fname) $fname
+	    set Pending(fdes) $fdes
+	    set Pending(callbacks) [list $opencb]
+	    set Pending(dn_lastout) [clock clicks -milliseconds]
+
+	    lappend Cache(pending) $url
+
+	    fcopy $src_fdes $fdes \
+		-command [list ::urlcache::__file_done $id $url $src_fdes]
+	} else {
+	    close $fdes
+	    ${log}::warn "Could not open file $url for reading"
+	    return 0
+	}
+    }
+
+    return 1
+}
+
+
+# ::urlcache::new -- (Re)create a new cache
+#
+#	Create a new cache, using a specific directory on disk.  The
+#	content of previous cache creation within that very location
+#	will be reused if appropriate.
+#
+# Arguments:
+#	dir	Top directory of cache (available in rw!)
+#	maxsize	Maximum size of cache in KB
+#	idxfname	Name of index file for cache.
+#
+# Results:
+#	Return an identifier that will be used in all further call to
+#	this module, an empty string in case of error (for example
+#	when the directory cannot be created or opened).
+#
+# Side Effects:
+#	None.
+proc ::urlcache::new { dir { maxsize 1024 } { idxfname "cache.idx" } } {
+    variable UC
+    variable log
+
+    # Check existence of directory and whether we are able to
+    # read/write files into it.  Create this directory if necessary.
+    if { ! [file exists $dir] } {
+	${log}::notice "Creating directory \"$dir\""
+	if { [catch "file mkdir $dir" err] != 0 } {
+	    ${log}::warn "Cannot create directory \"$dir\": $err"
+	    return ""
+	}
+    }
+    if { ! [file isdirectory $dir] } {
+	${log}::warn "\"$dir\" is not a directory!"
+	return ""
+    }
+    if { ! [file readable $dir] } {
+	${log}::warn "Cannot read from \"$dir\"!"
+	return ""
+    }
+    if { ! [file writable $dir] } {
+	${log}::warn "Cannot write to \"$dir\"!"
+	return ""
+    }
+
+    # Now, create cache object
+    set id [incr UC(idgene)]
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    set Cache(dir) [::diskutil::absolute_path $dir]
+    set Cache(maxsize) [expr double($maxsize) * 1024]
+    set Cache(idxfname) [file join $Cache(dir) [file tail $idxfname]]
+    set Cache(pending) ""
+    set Cache(size) 0.0
+    set Cache(content) ""
+    set Cache(relaxed_types) ""
+    set Cache(pgess_freq) $UC(pgess_freq)
+
+    lappend UC(caches) $id
+
+    # Resynchronise with current content
+    if { [::urlcache::__read_index $id] >= 0 } {
+	if { [::urlcache::__cut_off $id] > 0 } {
+	    ${log}::notice \
+		"New instantiated cache smaller than previous, resynchronising"
+	    ::urlcache::__write_index $id
+	}
+    }
+
+    return $id
+}
+
+
+# ::urlcache::__url_open_cb -- Local callback called when in blocking mode
+#
+#	This command is called when fetching through the cache is made
+#	in blocking mode.  It mainly aims at unblocking the caller
+#	procedure by signalising through the Cache struture.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL (local or remote) to store
+#	status	Status of cache storage: OK or ERROR
+#
+# Results:
+#	None
+#
+# Side Effects:
+#	None.
+proc ::urlcache::__url_open_cb { id url status {fname "" } } {
+    variable UC
+    variable log
+
+    ${log}::debug "$url fetching process ended: $status -> $fname"
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    if { $status == "OK" && [string length $fname] != 0 } {
+	set Cache(fetched) $fname
+    }
+    set Cache(fetching) 0
+}
+
+
+# ::urlcache::progress_frequency -- Set/Get progress frequency output
+#
+#	This command controls the progress frequency output of the
+#	cache (which is expressed in milliseconds).  A negative number
+#	switches the feature off.  All caches default to
+#	UC(pgress_freq) at creation time.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	freq	New frequency, empty string to simply get the value
+#
+# Results:
+#	None
+#
+# Side Effects:
+#	None.
+proc ::urlcache::progress_frequency { id { freq "" } } {
+    variable UC
+    variable log
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    if { [string is integer $freq] } {
+	${log}::debug "Setting progress frequency to $freq ms."
+	set Cache(pgess_freq) $freq
+    } elseif { $freq != "" } {
+	${log}::warn "Unrecognised progress frequency $freq, ignoring"
+    }
+
+    return $Cache(pgess_freq)
+}
+
+
+# ::urlcache::open -- Open a local/remote URL via the cache.
+#
+#	This command will open a remote URL or a local file via the
+#	cache.  Both types of URLs will be locally stored in the cache
+#	whenever possible, so that next access will attempt to return
+#	the cached value.  Modification times for files and URLs are
+#	used when deciding if the cached value should be returned.
+#	Called without a callback, this command will block the caller
+#	until the remote URL or the local file has been moved into the
+#	cache successfully or not and will then return the name of the
+#	local (cache) file containing data, or an empty string.  The
+#	callback takes 3 or 4 more arguments: the identifier of the
+#	cache, the URL that was fetched, a status (OK or ERROR) and a
+#	local (cache) file name when the status is OK.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	url	URL (local or remote) to store
+#	open_cb	Command to callback on success/failure
+#
+# Results:
+#	None if called in non-blocking mode, the name of the file
+#	containing cached data or an empty string when called in
+#	blocking mode.
+#
+# Side Effects:
+#	This command will create local files in the directory used by
+#	the cache and will also remove older files from that directory
+#	if necessary.
+proc ::urlcache::open { id url { open_cb "" } } {
+    variable UC
+    variable log
+
+    # Check that this is one of our caches.
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    # Check if we should fetch the URL, either since it is not in the
+    # cache, either since it is accessible at a newer version.
+    set has_copy ""
+    set idx [lsearch $Cache(content) $url]
+    if { $idx >= 0 } {
+	set varname \
+	    "::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	upvar \#0 $varname URLInfo
+	
+	if { [catch {__urlinfo_get $url mtime 1} mtime] } {
+	    set relaxit 0
+	    foreach ptn $Cache(relaxed_types) {
+		if { [string match $ptn $URLInfo(mimetype)] } {
+		    set relaxit 1
+		}
+	    }
+	    if { $relaxit } {
+		set has_copy [file join $Cache(dir) $URLInfo(fname)]
+	    } else {
+		${log}::warn "Could not get the modification date of $url,\
+                              which is not a relaxed type"
+		return -code error "Modification time cannot be accessed!"
+	    }
+	} else {
+	    if { $mtime <= $URLInfo(mtime) && $mtime != 0 } {
+		set has_copy [file join $Cache(dir) $URLInfo(fname)]
+	    } else {
+		::urlcache::__remove_url $id $url
+		::urlcache::__write_index $id
+	    }
+	}
+    }
+
+    # Now fetch the URL
+    if { $has_copy == "" } {
+	# Call ::urlcache::__url_open with an appropriate callback to
+	# handle both the cases of an open_cb style (non-blocking) and
+	# a blocking style of calling this routine.
+	if { $open_cb == "" } {
+	    set Cache(fetching) 1
+	    set Cache(fetched) ""
+	    if { [::urlcache::__url_open $id $url \
+		      ::urlcache::__url_open_cb] } {
+		vwait ::urlcache::URLCache_${id}(fetching)
+		return $Cache(fetched)
+	    } else {
+		return ""
+	    }
+	} else {
+	    if { ! [::urlcache::__url_open $id $url $open_cb] } {
+		${log}::warn "Could not open URL"
+	    }
+	}
+    } else {
+	if { $open_cb == "" } {
+	    return $has_copy
+	} else {
+	    # Deliver successfull callback
+	    if { [catch {eval $open_cb $id {$url} "OK" {$has_copy}} err] } {
+		${log}::warn "Error when invoking callback on $url: $err"
+	    }
+	}
+    }
+}
+
+
+# ::urlcache::relax -- Relax integrity for some MIME types
+#
+#	This command will sees to relax the integrity for the MIME
+#	types that match the patterns passed as arguments.  Relaxing
+#	means that when the remote URL is not accessible for any
+#	reason and when there is a local copy that is left, the cache
+#	will return the local copy even if it cannot check the
+#	modification date of the remote URL.  This command can be
+#	called several times, and will add MIME types patterns to an
+#	internal list.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	mt_ptn	MIME type pattern to relax on, string match-like (empty=query)
+#
+# Results:
+#	The current list of relaxed types.
+#
+# Side Effects:
+#	Explained above.
+proc ::urlcache::relax { id { mt_ptn "" } } {
+    variable UC
+    variable log
+
+    # Check that this is one of our caches.
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    if { $mt_ptn != "" } {
+	lappend Cache(relaxed_types) $mt_ptn
+    }
+
+    return $Cache(relaxed_types)
+}
+
+
+# ::urlcache::delete_unindexed -- Clean non-indexed files
+#
+#	This command will delete all files that match a pattern from a
+#	cache directory if they are not indexed from within the cache.
+#	This command is usefull to clean files which download had
+#	started but interrupted before being indexed.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	ptn	pattern
+#
+# Results:
+#	Return the number of files that were removed
+#
+# Side Effects:
+#	This command will actively delete files!
+proc ::urlcache::delete_unindexed { id { ptn * } } {
+    variable UC
+    variable log
+
+    # Check that this is one of our caches.
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    set removed 0
+    set allfiles [glob -nocomplain -tails -directory $Cache(dir) $ptn]
+    foreach fname $allfiles {
+	set remove 1
+	if { $fname == [file tail $Cache(idxfname)] } {
+	    set remove 0
+	}
+	foreach url $Cache(content) {
+	    set varname \
+		"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+
+	    if { $fname == $URLInfo(fname) } {
+		set remove 0
+	    }
+	}
+
+	if { $remove } {
+	    ${log}::debug "Removing $fname from $Cache(dir)"
+	    if { [catch {file delete [file join $Cache(dir) $fname]} err] } {
+		${log}::warn "Could not remove $fname from $Cache(dir): $err"
+	    } else {
+		incr removed
+	    }
+	}
+    }
+
+    ${log}::info \
+	"Cleaned $removed non-indexed files matching '$ptn' in $Cache(dir)"
+    
+    return $removed
+}
+
+
+# ::urlcache::delete -- Delete a cache
+#
+#	This command will delete a cache and (possibly) all
+#	information associated to it.  The default is to keep the
+#	index and the cache files on disk so that later instatiation a
+#	cache in that same directory will be able to catch up with the
+#	same state.  However, a true cleaning of the directory can be
+#	achieved, in which case only an empty index file is left.
+#
+# Arguments:
+#	id	Identifier of cache.
+#	cleanup	Should we completely remove all cached files?
+#
+# Results:
+#	None.
+#
+# Side Effects:
+#	This command will attempt to remove local cache files if a
+#	full cleanup is requested.
+proc ::urlcache::delete { id { cleanup 0 } } {
+    variable UC
+    variable log
+
+    # Check that this is one of our caches.
+    set idx [lsearch $UC(caches) $id]
+    if { $idx < 0 } {
+	${log}::warn "Cache identifier $id is not valid"
+	return -code error "Cache identifier invalid"
+    }
+
+    # Get to the variable containing information for it.
+    set varname "::urlcache::URLCache_$id"
+    upvar \#0 $varname Cache
+
+    if { $cleanup } {
+	# True cleanup, destroy all files and write an empty index
+	::urlcache::__remove_urls $id $Cache(content)
+	::urlcache::__write_index $id
+    } else {
+	# Soft cleanup, clear all local data, but keep the files.
+	foreach url $Cache(content) {
+	    ${log}::debug "Soft removing of information for $url"
+	    set varname \
+		"::urlcache::URLInfo_${id}_[::md5::md5 -hex $url]"
+	    upvar \#0 $varname URLInfo
+	
+	    unset URLInfo
+	}
+    }
+
+    # Arrange so that we do not know anything about the cache anymore
+    unset Cache
+    set UC(caches) [lreplace $UC(caches) $idx $idx]
+}

@@ -1,0 +1,5 @@
+# This file serves as an example for the accesscontrol module.
+
+accesscontrol_test.tcl: ALL: ALLOW
+ALL: emmanuel: ALLOW
+ALL: ALL: DENY

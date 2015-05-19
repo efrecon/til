@@ -1,0 +1,101 @@
+#!/bin/bash
+#
+# tclsvcd:      Starts the TCL service daemon
+#
+# Version:      @(#) /etc/init.d/xfs 2.0
+#
+# chkconfig: 2345 90 10
+# description: Starts and stops the TCL service daemon at boot time \
+#              and shutdown.
+#
+# processname: tclsvcd
+# config: /etc/sysconfig/tclsvcd
+# hide: true
+
+# Source function library.
+export LANG=C
+. /etc/init.d/functions
+
+prog=tclsvcd
+tclsh=tclsh
+rootdir=/home/emmanuel/projects/mBlog/src/lib/til/bin
+
+# Source tclsvcd configuration.
+if [ -f /etc/sysconfig/$prog ] ; then
+        . /etc/sysconfig/$prog
+else
+        STARTEROPTIONS=""
+fi
+
+start() {
+    echo -n $"Starting $prog: "
+    $tclsh ${rootdir}/daemon.tcl -basename $prog -nice 10 -user emmanuel -program ${rootdir}/starter.tcl -- $STARTEROPTIONS
+    ret=$?
+    return $ret
+}	
+
+kill() {
+    echo -n $"Killing $prog: "
+    $tclsh ${rootdir}/daemon.tcl -basename $prog -kill
+    return $ret
+}
+
+stop() {
+    echo -n $"Shutting down $prog: "
+    $tclsh ${rootdir}/killapp.tcl -sync
+    $tclsh ${rootdir}/daemon.tcl -basename $prog -kill
+    return $ret
+}
+
+rhstatus() {
+    status $prog
+}	
+
+restart() {
+    echo $"Restarting $prog:"
+    stop
+    start
+}
+
+recap() {
+    echo $"Reattaching $prog:"
+    kill
+    start
+}
+
+reload() {
+    echo -n $"Reloading $prog: "
+    $tclsh ${rootdir}/killapp.tcl -sync -reload
+    RETVAL=$?
+    echo
+}
+
+case "$1" in
+  start)
+  	start
+	;;
+  stop)
+  	stop
+	;;
+  recap)
+    recap
+    ;;
+  restart)
+    restart
+    ;;
+  condrestart)
+  	[ -f /var/lock/subsys/$prog ] && reload || :
+	;;
+  status)
+  	rhstatus
+	;;
+  reload)
+	reload
+	;;
+  *)
+	echo $"Usage: $prog {start|stop|status|restart|condrestart|reload|recap}"
+	exit 1
+esac
+
+exit $?
+

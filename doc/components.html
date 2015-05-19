@@ -1,0 +1,720 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+
+
+
+
+
+  
+
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  <title>TIL Components</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  <meta name="generator" content="WordPress 1.0.1" />
+<!-- leave this for stats -->
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  <style type="text/css" media="screen">
+@import url( style.css );
+  </style><!-- alternate links removed -->
+</head>
+
+
+<body>
+
+
+
+
+
+
+<div id="rap">
+<h1 id="header">TIL - The Tcl ICE Library</h1>
+
+
+
+
+
+
+<div id="content">
+<div class="post">
+<div>
+<h1>TIL Components</h1>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+<div class="storycontent">
+<p>TIL is composed of both a set of
+libraries and a set of binaries. The libraries provide a number of
+components (often network-oriented) to developers, while the utilities
+provide either a supporting layer to these libraries, either
+administrative and interactive oriented functionalities to end-users.</p>
+
+
+
+
+<h2>1. Libraries</h2>
+
+
+
+
+<h3>1.1. Network Oriented Components</h3>
+
+
+
+
+<p align="left">The network oriented libraries are, in summary, the following:</p>
+
+
+
+
+<ul>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-1">command server</a> provides facilities to implement server that respond to commands according to a line-based textual protocol.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-2">permanent client</a> is the client-side of the above facility and provides features such as automatic reconnection.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-4">DNS resolver</a> improves (and replace) the facility that is already in the Tcl library.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-5">remote parameter storage</a> facility is a specific command
+server, together with its client-side, to store, retrieve and access
+pairs of key and values in a distributed manner.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-14">java library</a> facilitates communication with java servers and clients that follows the UTF8 set of communication methods.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-15">mass URL fetching</a> provides facilities to simultaneously fetch many URLs simultaneously through a host-based queue system.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-16">URL information and content caching</a> provides facilities to implement the cache of a web-aware application such as a browser.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-17">tiny HTTP server</a> is a continuation of code from Steve Uhler's <a href="http://cvs.sourceforge.net/viewcvs.py/tclhttpd/tclhttpd/bin/mini/">minihttpd.tcl</a> with a number of improvements and the possibility to
+implement as many servers as possible.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-20">RSS library</a> provides facilities to parse RSS feeds and continuously watch feeds for addition and removal of items.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-21">port number allocator</a> implements a sort of name service that
+maps service names to ports in a unique and reproductible manner.</li>
+
+
+
+
+</ul>
+
+
+
+
+<h3>1.2. Interactive Components</h3>
+
+
+
+
+The components of the library which are aimed at interactive applications are the following:<br />
+
+
+
+
+<ul>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-18">MIME type guessing</a> library provides facilities to guess the
+MIME types of files through their extensions and/or through peeking
+some of their initial content.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-18">playlist</a> library implements a playlist storage facility,
+complemented with play, pause, etc. operations on top of the snack
+library.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-3">error handler</a> provides ways for applications to catch some errors and continue in an ordered fashion.</li>
+
+
+
+
+</ul>
+
+
+
+
+<h3>1.3. System Components</h3>
+
+
+
+
+The system components of the library are mostly aimed at disk operations of many sorts. In summary, they are the following:<br />
+
+
+
+
+<ul>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-7">disk utilities</a> provides a number of additional facilities on top and around the <span style="font-family: monospace;">file</span> command.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-6">cron</a> package provides facilities to schedule procedure for regular execution.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-9">log watch</a> package provide facilities to monitor the content of log files.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-10">log file output</a> provides facilities to create and rotate log files.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-11">spool library</a> provides facilities to treat directory
+structure as spools: new files placed in the inbox will be moved in the
+outbox or the error directory upon treatment.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-12">time stamping</a> facility handles millisecond time stamp strings.</li>
+
+
+
+
+  <li>The <a href="manual.html#section-2-3-13">process</a> library provides facilites to handle processes created outside of the Tcl space.</li>
+
+
+
+
+</ul>
+
+
+
+
+<h2>2. Binaries and Utilities<span style="font-style: italic;"></span></h2>
+
+
+
+TIL is also composed of a number of binaries and utilities. While some
+of these binaries provides a run-time backend to the remainder of the
+library, some other utilities are of generic use. Most of these
+binaries perform a well defined task and act as a server providing a
+number of operations around that task.<br />
+
+
+
+<h3>2.1. Utilities to run and supervise other tasks</h3>
+
+
+
+A number of utilties are aimed at the control of other applications:<br />
+
+
+
+<ul>
+
+
+
+  <li>The <a href="manual.html#section-2-2-1-1">starter</a> is a service handle that ensure that a number of
+applications (usually non-interactive, but not necessarily the case)
+continuously run on a given machine.</li>
+
+
+
+  <li><a href="manual.html#section-2-2-1-2">killapp</a> is a special client to the starter, aimed at restarting and killing applications that are placed under its control.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-1-3">daemon</a> takes on single application and ensure its continuous
+run. It is placed at a lower level than the starter described
+above.&nbsp;</li>
+
+
+
+  <li><a href="manual.html#section-2-2-1-4">tclsvcd</a> is a companion application to the daemon and is aimed at
+starting services, via the daemon, during the boot up phase of a UNIX
+machine.</li>
+
+
+
+  <li><a href="manual.html#section-2-2-1-5">crond</a> is a cron implementation in Tcl that is able to host (and
+run) procedure (i.e. dynamic code) at regular intervals, and also act
+as a normal cron daemon.</li>
+
+
+
+</ul>
+
+
+
+<h3>2.2. Support for componentised Applications</h3>
+
+
+
+A number of utilities attempt to support the idea of one-task-one-process componentisation. These are:<br />
+
+
+
+<ul>
+
+
+
+  <li>A <a href="manual.html#section-2-2-2-1">distributed parameter server</a> that allows several applications to store and share &lt;key,value&gt; pairs.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-2-2">multiplexer</a> multiplexes any command-line based protocol between several servers and clients and can act as a hub in-between.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-2-3">bridge</a> reencapsulates command-line based protocol packets in
+safe environments where firewalls impair the free usage of ports.</li>
+
+
+
+</ul>
+
+
+
+<h3>2.3. Miscellaneous Utilities</h3>
+
+
+
+TIL also provides a number of other utilities:<br />
+
+
+
+<ul>
+
+
+
+  <li>The <a href="manual.html#section-2-2-3-1">prompt</a> is an interactive command-line prompt for
+applications&nbsp;servers that follow a line-based protocol where the
+first keyword is a command.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-3-2">timestamper</a> is an application that timestamps that output of
+applications piped into it and writes and rotates this output to log
+files.&nbsp;</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-3-3">URL watching server</a> watches remote and local URLs for modifications and notifies clients.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-3-4">URL cache</a> caches remote URLs to the local disk and only refetches these when they have changed.</li>
+
+
+
+  <li>The <a href="manual.html#section-2-2-3-5">port number allocator</a> uniquely allocates port numbers to services (represented by strings).</li>
+
+
+
+</ul>
+
+
+
+
+<span style="font-style: italic;"></span>
+</div>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+<div id="menu">
+<ul>
+
+
+
+
+
+
+  <li id="wordpress">main
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+      <li><a href="main.html">overview</a> </li>
+
+
+
+
+
+
+      <li><a href="http://www.sf.net/projects/til">Project
+@ sf</a></li>
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+  <li id="wordpress">Support
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+      <li><a href="faq.html"><span style="text-decoration: underline;">faq</span></a></li>
+
+
+
+
+
+
+      
+
+      <li><a href="components.html">components</a></li>
+
+
+
+
+
+
+      <li><a href="manual.html">manual</a></li>
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+  <li id="wordpress">Download
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+      <li><a href="license.html">license</a></li>
+
+
+
+
+
+
+      <li><a href="http://prdownloads.sourceforge.net/til/til.1.2.tgz?download">latest</a></li>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/cvs/?group_id=146459">current</a></li>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/project/showfiles.php?group_id=146459">releases</a></li>
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+  <li id="wordpress">Feedback
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?group_id=146459&amp;atid=765300">bugs
+list</a></li>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765300">submit
+bug</a></li>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?atid=765303&amp;group_id=146459&amp;func=browse">feature
+requests list</a></li>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765303">Request
+feature</a></li>
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+  <li id="categories">Hosting
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net"><img src="http://sourceforge.net/sflogo.php?group_id=146459&amp;type=1" alt="SourceForge Logo" border="0" height="31" width="88" /></a></li>
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+</ul>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+<p class="credit"><cite>theme by&nbsp;<a href="http://www.alexking.org/software/wordpress/styles/sample.php?wpstyle=blue_green"><span style="text-decoration: underline;"><span style="font-weight: bold;">Chris M</span></span></a><a href="http://wordpress.org" title="Powered by WordPress, state-of-the-art semantic personal publishing platform"><strong></strong></a></cite></p>
+
+
+
+
+
+
+</body>
+</html>

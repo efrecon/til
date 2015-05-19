@@ -1,0 +1,20 @@
+package require tcltest 2.2
+eval ::tcltest::configure $argv
+package require outlog
+namespace eval ::outlog::test {
+    namespace import ::tcltest::*
+
+    test ol-1.0 "Create an output log file" -setup {
+	set fname [makeFile "Example log" out.log]
+	removeFile out.log
+
+	set o1 [::outlog::open $fname]
+    } -body {
+	::outlog::puts $o1 "one line"
+	::outlog::puts $o1 "one line"
+	::outlog::close $o1
+	file exists $fname
+    } -cleanup {
+	removeFile out.log
+    } -result 1
+}

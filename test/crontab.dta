@@ -1,0 +1,4 @@
+INCLUDE "%progdir%/../test/crontab_procs.tcl"
+
+* * * * * PROC dumbo
+*/2 * * * * PROC dummy 3 4

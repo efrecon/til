@@ -1,0 +1,720 @@
+
+
+		      TIL - The Tcl ICE Library
+
+
+		  Emmanuel Frécon - emmanuel@sics.se
+
+
+1. Introduction
+
+   TIL is a collection of Tcl-only libraries and utilities of
+   general type.  Most of these libraries and utilities originates
+   from a number of projects where interaction was a key issue and
+   where the applications being developed and deployed would run
+   continuously for days and, thus, need to perform some level of
+   introspection to check the liveness of the system in question.
+
+   In general, TIL has three major goals.
+
+   1. Facilitate the development, deployment and surveillance of
+      Tcl-based distributed applications and systems.
+
+   2. Suppress the discrepancies between UNIX and Windows when it
+      comes to administration and deployment.
+
+   3. Demonstrate a design principle that consists in writing
+      network-aware simple components.  These components handle a
+      single and well-defined task and an application consists of
+      several of these components, assembled on one or several
+      machines.
+   
+   TIL has been repackaged as a library for general use, and some new
+   bugs might have appeared while doing so.
+
+
+2. Modules and Programs
+
+   TIL is composed both of a number of packages that can directly be
+   used in applications and of a number of programs that demonstrate
+   the packages, the principles behind TIL and are utilities useful
+   enough to make their way into a library distribution.
+
+2.1. Organisation
+
+   TIL is mainly a library of packages, and there is one directory per
+   package, ready for a "package require" command.  Additionally, the
+   directory named "bin" contains all programs and utilities and the
+   directory "test" a number of files and scripts to quickly test the
+   facilities of the libraries.
+
+2.2. TIL Utilities
+
+   The TIL utilities are only dependent on tcllib (tested with version
+   1.6.1) and on the TIL library.  They all share a common helper
+   module called "argutil.tcl", which is not itself part of the
+   library.  Through "argutil", the TIL utilities attempt to look for
+   tcllib at a specific version back into the upper hierarchy.  This
+   is only a hint for package loading and can be overriden by any
+   other Tcl means.
+
+   The utilities can grouped into three different types of
+   applications: applications to continuously run and supervise a
+   number of other tasks, applications to help the deployment of
+   distributed component-based applications and miscellaneous other
+   helper utilities.
+
+   Most of these applications support a basic command line
+   socket-based protocol to expose their capabilities to remote
+   clients and attain flexibility.  As such, these applications
+   attempt to exemplify one the design principle behind TIL:
+   TIL wishes to cut down monolythic applications into small
+   networked components, as well as making the connection between
+   these components explicit (as opposed to a number of modern
+   programming paradigms that attempt to hide network complexity).
+   
+   These applications all act as servers, and one utility application
+   (called "prompt.tcl") allows to interactively talk to these
+   servers.  All these applications are built on top of modules from
+   the TIL library, so that programmers will be able to migrate these
+   facilities easily into their own code.  The command-line protocol
+   is a line-based protocol, where the first word of the line is the
+   command and the remaining the arguments.  All servers automatically
+   implement a number of commands, namely COMMANDS, QUIT, CLOSE,
+   FINISH and EXIT.  COMMANDS will return the full list of commands
+   supported by the server.  QUIT and CLOSE should be sent by
+   well-behaved clients before closing the connection (but are not
+   mandatory).  FINISH will force the server to stop serving new
+   clients and will close all its current connections.  EXIT will exit
+   the whole application behind the server.  As such, the TIL really
+   should be run in trusted environments, even though it provides for
+   some degree of security protection through remote host allowance
+   and denial based on IP number and name matches.
+
+   Most of these applications takes an argument called -help, which
+   will print out some usage help for the application.  Note that
+   some of these applications suppose that TIL is currently setup and
+   running (see the section on the "process" package!).
+
+2.2.1. Running and Supervising Tasks
+
+2.2.1.1. Starter
+
+   The core of this group of applications is made of "starter.tcl",
+   which implements a Tcl-level service and application.  "starter"
+   reads a number of service-list description files and will make sure
+   that the applications that these point at will continuously run.
+   The output of these applications is automatically logged (and
+   timestamped) to the disk, and the log will automatically rotate
+   regularly.  Services that have crashed will be automatically
+   restarted.
+
+   The list of files describing the services is specified via the
+   parameter called -infiles.  These are complete path to files on the
+   disk, where some variables (contained between % signs) will be
+   automatically replaced by the run-time value when the script is
+   started.  Supported variables are currently all the content of the
+   tcl_platform global array, "hostname" (the fully-qualified host
+   name of the machine, whenever possible), "progdir" and "progname"
+   (i.e. the name of the script without directory specification).  In
+   these files, empty lines or lines starting with a "#" will be
+   ignored.  Other lines should contain a keyword, followed by the
+   application to start and its arguments.  An example service file is
+   contained in the "test" directory and called "services.stp".  The
+   keyword specifies the type of application, and the following are
+   currently supported:
+
+   * The keyword "T" will indicate a Tcl only script.  In that case,
+     the script will be started by the binary tclsh contained in the
+     same directory as the one that started starter.
+
+   * The keyword "W" will indicate a Tk script.  In that case, the
+     script will be started by the binary wish contained in the same
+     directory as the one that started starter.
+
+   * The keyword "J" will indicate a Java application.  In that case,
+     starter will use one of the libraries from TIL to locate a
+     suitable JVM installed on the current machine.
+
+   * The keyword "S" can be used to start any other application,
+     typically a shell command.
+
+   Starter offers the following commands to clients:
+
+   * LIST, will return the list of currently running services.  That
+     list will be composed of the identifiers of the services,
+     immediately followed by the process identifier of their
+     application.
+
+   * INFO will return complete information on the service which
+     identifier, process identifier or name is passed as a parameter.
+
+   * REMOVE will remove one or several services, which identifier,
+     process identifier or name are passed as a parameter.  Running
+     instances of these services will be killed.
+
+   * REMOVE_ALL will remove and kill all currently known services.
+
+   * RESTART will restart one or several services, the arguments are
+     the same as for REMOVE.
+
+   * RESTART_ALL will restart all currently known services.
+
+   * RELOAD will kill all currently known services, reload the service
+     description files and restart the services.
+
+   * WATCH will start watching the output of a given service.  Any new
+     line appended to the log file associated to the service will be
+     sent back to the client, preceeded by the command LOG and the
+     identifier of the service.
+
+   * UNWATCH suppresses a log watch as installed by the previous
+     command.  Logging will still continue on disk, only socket
+     forwarding of log lines will stop.
+
+2.2.1.2. killapp
+
+   The "killapp.tcl" application is a barebone Tcl applications with
+   as little dependencies as possible that simplifies operations on
+   the services that are controlled by the starter application
+   described in section 2.2.1.1.  "killapp" is meant as an emergency
+   application and starting it without any arguments will connect to
+   the running starter and tell it to remove all or some of its
+   services.  killapp is also able to trigger the reloading of service
+   specification files or the restarting (as opposed to suppression)
+   of services.
+
+2.2.1.3. daemon
+
+   The daemon.tcl application provides a service that is slightly
+   similar to starter, except that it controls a single application.
+   Daemon is meant to be started from a UNIX-style startup script
+   during boot-time (/etc/init.d startup script).  Daemon will fork
+   the application that it controls and write enough state to the disk
+   to be able to kill it later on (using the -kill argument) and to
+   make sure one and only one instance of this application is running.
+   Daemon will also make sure to log the output of the application
+   that it controls to the disk.  The locations for the state and log
+   file defaults to well-known places under the UNIX system file
+   hierarchy: /var/log, /var/run, etc.
+
+   Usually, daemon will be run by the administrator of the machine but
+   will change user so that the application that it controls is run by
+   another user.  For situations where you cannot, as a user, have
+   access to the boot sequence and/or not enough access priviledges,
+   daemon can also be used to be regularly started as a standard cron
+   job.  In that mode, daemon will check that the application that it
+   controls still runs and restart it if necessary.  This mode of
+   operation consumes more computing resources but is another way of
+   ensuring the presence of another application on a given machine.
+   Daemon does not assume that the other application that it controls
+   is a Tcl script, you can control any other type of application.
+
+   daemon.tcl has been tested on a Linux system and is currently
+   dependent on the /proc file system on UNIX machines.  It is also
+   known to be working on windows machines, as long as the TIL library
+   and the process package have been setup correctly.
+
+2.2.1.4. tclsvcd
+
+   "tclsvcd" is a companion application to daemon and an example of an
+   init.d-style script.  Copying it to your system and making it part
+   of your booting process should ensure the starting up of services
+   (via the starter application above) as soon as the system goes
+   live.  Apart from being Tcl-aware, the advantage of this solution
+   is the provision of a command line protocol for remote operations
+   on the services being put into control.
+
+2.2.1.5. crond
+
+   The "crond.tcl" application is an implementation of cron in Tcl.
+   It complies almost entirely to the crontab syntax, but adds the
+   possibility to load a script (and procedures) from within the
+   crontab and call these procedures at regular intervals.  This
+   facility makes easier the storing of state in between regular
+   operations, i.e. without requiring storing state on the disk.  A
+   list of crontab files is pointed at by the -crontab argument.  The
+   file paths obey to the same rules as the -infiles argument of the
+   starter script above, i.e. the can contain some run-time variable
+   contained between % signs.
+
+   In the crontab files, empty lines and lines starting with "#" will
+   be ignored.  Otherwise, the following types of lines are
+   supported.  Any line that starts with the keyword INCLUDE will
+   trigger the sourcing of the file name passed as a second argument.
+   Once again, this name can contain run-time variables between %
+   signs.  The script will be sourced into the cron at the global
+   level, which might lead to insecurity.  Good practice is to make
+   use of namespaces.  The other types of lines contain five initial
+   fields specifying when to run the activity (same syntax as
+   crontab), followed by the keyword PROC, or the keyword EXEC.  PROC
+   will called one procedure, typically sourced an INCLUDE directive
+   line, EXEC will execute an external command.
+
+   This implementation of the cron daemon offers a number of commands
+   to remote clients.  These are:
+
+   * LIST will return the list of the identifiers of the current
+     activities registered at the cron daemon.
+
+   * INFO will return full specification of a given activity.
+
+   * DELETE will remove an activity.
+
+   * ADD will add a new activity at run-time.  This activity will not
+     be saved in any crontab file.
+
+
+2.2.2. Componentised Applications Support
+
+2.2.2.1. Distributed Parameter Storage
+
+    The core of this group of applications is "params.tcl", an
+    application that store, set and deliver key-value pairs to remote
+    clients.  The application is able to store both persistent and
+    volatile data, through different commands offered to clients.
+    Persistent parameters will be saved on a local file, which will be
+    read at each startup of the application.  Volatile parameters can
+    be initialised through specifying a number of files that will be
+    read when the applications is starting through the command-line
+    parameter -infiles.  This parameter, as for the service starter
+    and the cron, accepts run-time variables enclosed by % signs.
+
+    The parameter server offers a number of commands to remote
+    clients.  These are listed below.  However, a higher-level package
+    can be used to communicate with the server in a transparent manner
+    from applications.  This package is part of TIL and called param.
+
+    * LIST will return the list of all currently known persistent and
+      volatile parameter.
+
+    * GET will return one or more parameters, wildcards (string match)
+      are accepted in the names.
+
+    * SET and UNSET will set and unset a parameter and its value.
+      These will be volatile parameters.
+
+    * STORE and UNSTORE do the same, while declaring the parameter as
+      persistent over time.
+
+    * WATCH sees to install a watch so that the client will be
+      notified when a parameter matching the wildcard specification
+      given as a parameter has been set.  WATCH enables simplistic
+      synchronisation between applications that share a set of common
+      data.
+
+    * IGNORE removes an existing parameter watch.
+
+2.2.2.2. Data Multiplexing
+
+    The multiplex.tcl application is a server that accepts any number
+    of clients and that will forward to all other clients any data
+    that is sent from one of its client, hence effectively
+    multiplexing all communication between clients.  The command-line
+    parameter -back commands if data sent by one client will be sent
+    back to the origin.
+
+    Additionally, multiplex has a liveness parameter which allows this
+    application to automatically end after a given period of time.  By
+    putting multiplex under the control of starter and testing
+    regularily that it is possible to connect to the multiplex server,
+    it is possible to check that starter itself still functions as it
+    should.
+
+2.2.2.3. Port Bridging
+
+    The bridge.tcl application is a server that accepts any number of
+    clients on a known port and manages the subscription to other
+    remote servers, through this known port (typically a port allowed
+    by a firewall), on behalf of its clients.  The client side
+    implementation of the bridge capabilities is implemented as part
+    of the permanent client library (see section 2.3.2.).
+
+    The bridge application accepts a number of commands from its
+    clients.  These are:
+
+    * CONNECT takes two arguments and will attempt to connect a remote
+      service.  The name or IP of the host is the first argument to
+      the command, while the port number is the second argument.
+
+    * DISCONNECT also takes two arguments and will disconnect from a
+      service to which the bridge was attached using the CONNECT
+      command.
+
+    * Any other command will be sent further to one of the services to
+      which the bridge is connected.  The command (and thus first
+      word) sent on the socket should be composed on the name of the
+      host, followed by a slash, followed by the port number of the
+      remote service.  Any remaining arguments on the line will
+      blindly be sent to the remote service.  Sending such a formatted
+      command to the bridge can automatically lead to connection to
+      the remote service.  This is currently an internal parameter
+      that could be switched off for security reasons.
+
+
+2.2.3. Miscellaneous Other Utilities
+
+2.2.3.1. Generic Prompt
+
+    prompt.tcl is a generic prompt to all the serving utilities
+    described here.  This application connects to a remote server.
+    All command lines that are entered at the prompt will be sent to
+    the server for treatment and all input from the server will be
+    written in the caller's window.
+
+2.2.3.2. Log Timestamping
+
+    timestamper.tcl is an application that watches a file (or the
+    standard input) and that will write to a file (or to the standard
+    output) each line of the input file, preceeded by the timestamp at
+    which this line was read.  When writing to files, timestamper.tcl
+    implements log rotation facilities so that only the latest data is
+    kept on disk.  timestamper.tcl is used both by starter.tcl and by
+    daemon.tcl (see section 2.2.1.) when logging to disk.
+
+2.2.3.3. Local and Remote URL Watching
+
+    url_watcher.tcl continuously monitors a number of remote URLs
+    (http only so far) or local files for modifications.  As soon as
+    the modification date of a remote or local file has changed,
+    clients that have requested for the monitoring of these URLs will
+    be notified.  url_watcher accepts a number of commands from its
+    clients:
+
+    * WATCH takes all the remaining arguments as local or remote URLs
+      and starts monitoring their modification time only if the URL
+      exists at creation time.
+
+    * ADD acts as above but do not check for the existence of the URL,
+      which allows to watch for files that will be created in the
+      future.
+
+    * REMOVE remove one or several URL monitoring.
+
+    * CHECK forces a check of all URLs now, otherwise checking is
+      usually done in a lazy manner at spread intervals.
+
+    * BURST places the URL watching service in burst mode, which means
+      that possibly many monitoring are going to be installed soon.
+      This will have the effect of attempting to spread more evenly
+      all remote and local checks in time.
+
+    * ATONCE ends bursting mode.
+
+2.2.3.4. Caching of remote URL
+
+   cachectl.tcl is a utility to locally cache a number of remote URLs
+   to the disk.  The utility is able to handle any number of caches
+   and there are very few arguments that are recognised when creating
+   caches for the time being.  cachectl is built on top of the URL
+   caching facility from the library below.  As such, it is able to
+   smoothly handle redirects and retries on failing URLs.  It
+   currently accepts the following commands from its clients (that
+   really should be able access the local disk!):
+
+   * CACHE takes the name of a directory local to the program as an
+     argument and will instantiate (or restart) a cache from that
+     directory.  The name of directory supports the "%"-syntax
+     introduced by crond. The command sends back a CACHE command to
+     the client, with two arguments this time: the name of the
+     directory and an identifier for that cache.  The identifier will
+     be used in all further commands.
+   
+   * GET takes a cache identifier and a number of URLs as its
+     arguments.  All URLs will be actively fetched into the cache if
+     necessary.  Once in the cache, the command will return back to
+     the client the command GOT with the identifier of the cache, the
+     URL and the name of the local file (relative to the directory or
+     with the whole path, this is option-dependent).  On failure, an
+     ERROR command, followed by the identifier of the cache and the
+     URL will be returned.
+
+   * INFO takes a cache identifier and a number of URL matching
+     patterns as its arguments.  It will return information for all
+     URLs matching the patterns to the caller through a command for
+     each URL.  Each command will start with the cache identifier,
+     followed by the URL, followed by a list of key values describing
+     the URL state in the cache.
+
+2.2.3.5. Port number allocator
+
+   port_allocator.tcl is a utility to allocate port number for a set
+   of remote services.  It uses an external human-readable file for
+   storing the port number that already have been allocated.  The
+   program can either be used as a continuously running service or as
+   a one-shot port allocator helper.  When it is started with one of
+   the -servicename or -servicedescr options, it will simply allocate
+   a new service and write the port to the database file.  Otherwise,
+   it runs as a service and accepts two commands:
+
+   * ALLOCATE takes two arguments, one being the name of the service
+     (typically the name of the main (Tcl) binary) and a textual
+     description for that service.  A new port number will be
+     associated to that service and a command will be sent back to
+     pass back the new port number to the caller.  This command is
+     composed of the keyword ALLOCATED, followed by the name of the
+     service, followed by its port.
+
+   * PORTINFO takes either no argument or any number of arguments.
+     Each argument is a port number for which information is being
+     queried.  If no arguments are given, PORTINFO will return
+     information about all known ports.  For each port, PORTINFO will
+     return one command composed as followed: the keyword PORT,
+     followed by the port number, followed by the name of the service,
+     followed by the description of the service in between quotes.
+
+
+2.3. The TIL Library
+
+   The TIL library is composed of a number of packages and most of the
+   documentation is in form of well-formatted comments in the source
+   for the time being.  All packages are isolated in their own name
+   spaces and will never pollute the global name space.  The TIL
+   library requires tcllib for operating.
+
+   Most packages provide a loglevel command that control the level of
+   logging that is associated to the package.  These levels are
+   compliant to the logger package from tcllib.  All packages have a
+   distinct log level to be able to selectively turn up or down this
+   level whenever necessary.  The default logging level is always
+   "warn".
+
+2.3.1. Command Server
+
+   cmdserver is a package to implement command servers that follows a
+   simplistic protocol where remote clients send commands that start
+   with a keyword and end with an end of line.  cmdserver provides a
+   series of tcl procedures to handle connection and disconnection of
+   clients, as well as the mapping of incoming socket commands onto
+   Tcl procedures.  Each client connection can be associated to any
+   number of key, value pairs that can be used by applications to
+   store data associated to the connection.  cmdserver provides a
+   basic level of security through the fine-grain controlling of the
+   hosts that will be able to connect to the servers.
+
+2.3.2. Permanent Client
+
+   permclient is a package which implements the client side of
+   connections to remote servers implemented through cmdserver.  Apart
+   from facilitating opening and closing of connections, the major
+   feature of permclient is it ability to re-establish connection
+   with a remote server whenever it has been lost.  The permclient
+   package will continuously attempt to reconnect on a regular basis.
+
+   permclient is also able to connect to remote servers via the bridge
+   facility, which is a service offered by TIL.  Section 2.2.2.3. gives
+   more details.
+
+2.3.3. Error Handler
+
+   errhandler provides a facility to handle background error in
+   applications while still letting these to continue once an error
+   has occured.  While the package is generic enough for usage
+   anywhere, it is primarily used by the server and client packages to
+   discover socket connection problems and re-establish connection
+   whenever necessary.
+
+2.3.4. DNS Resolution
+
+   dnsresolv is a further development of the module called resolv,
+   which is part of the tcllib dns package.  Since both code bases are
+   mine, ultimately these should be merged.  dnsresolv provides a
+   facility for inverse resolution and improves slightly the algorithm
+   used to detect the DNS server that an application should use for
+   resolution.
+
+2.3.5. Remote Parameter Storage
+
+   param is a package which provides a client-side implementation of
+   the parameter server described in section 2.2.2.1.  It provides
+   facilities to set parameters at the server and to get their
+   values.  It is based on active caching of the remote values of all
+   parameters at the server, an implementation that could be changed
+   if scalability became an issue.
+
+   param::store is the heart of the parameter storage server.  It 
+   provides a glorified key,value storage structure with facilities to
+   write and read this "database" to and from files.  Reading from
+   files support the inclusion of files.  A value starting with an "@"
+   sign in a file will be interpreted as a list which content should
+   be obtained from another file, which name is represented by all
+   characters that follow the "@" sign.  In all files, empty lines and
+   lines starting with #, ; or ! are ignored.
+
+2.3.6. Cron
+
+   The cron package provides facilities to schedule procedures to be
+   called at regular intervals in time, and follows a syntax that is
+   similar to the traditional UNIX cron package.
+
+   The crontab package provides facilities to read extended crontab
+   files.  These files, as described in section 2.2.1.5., are very
+   similar to crontab files, but also support the inclusion of other
+   Tcl scripts and the calling of both external programs and of
+   internal procedure at regular intervals.
+
+2.3.7. Disk Utilities
+
+   The diskutil provides a number of aid in handling files and path in
+   a cross-platform manner.  The package provides facilities to handle
+   PATH-like variable, to generate temporary file names and
+   directories, to concatenate the content of several files, to clean
+   up (temporary) directories, etc.
+
+   diskutil also provides an implementation for the file path
+   resolution facility that is used in a number of TIL applications
+   and that replaces some variables enclosed by % signs at run-time.
+
+2.3.8. Directory and File Content Monitoring
+
+   dirwatch and filewatch are packages to watch the content of
+   directories and files.  dirwatch will monitor directories for file
+   additions and removal and will provide appropriate callbacks.
+   filewatch will monitor files and provide callbacks whenever these
+   have been created or changed.
+
+2.3.9. Log Watch
+
+   logwatch provides facilities to watch (typically growing) log files
+   and provide callback with their content as they grow.  The package
+   purposedly opens and closes the files dynamically in order to
+   handle properly mounted remote file systems.
+
+2.3.10. Log File Output
+
+   outlog provides facilities to output data to log files, together
+   with facilities to automatically rotate these log files so that
+   only a controlled number of these files is kept.
+
+2.3.11. Spooling Directories
+
+   spool provides facilities to treat directory structures as spool
+   directories.  A spool is a directory that contains three
+   sub-directory with appropriate semantics: inbox, error and sent.
+   inbox is where files arrive, sent where files that have been
+   treated with success are moved and error is where files that have
+   not been treated with success are moved.  The spool will watch for
+   new files arriving in the inbox, provides callbacks to the
+   application and move the file to the sent or error sub-directories
+   upon success or failure, as directed by the application.
+
+2.3.12. Time Stamping
+
+   timestamp is a tiny package to implement timestamping at the
+   millisecond.
+
+2.3.13. Process
+
+   process is a package to handle processes external to Tcl and
+   running on the same host.  The package provides commands to kill
+   and list these processes in a platform agnostic way.
+
+   In order for the package to function properly on Windows, you will
+   need the "PsTools" package from Sysinternals.  This package is
+   available at the following URL (for windows NT and above only):
+   http://www.sysinternals.com/ntw2k/freeware/pstools.shtml.  Place
+   the content of the distribution in the bin/windows sub-directory of
+   the package for proper functioning.
+
+2.3.14. Java
+
+   The java package provides facilities to communicate with remote
+   Java processes that use the utf8 writing and reading methods, and
+   for looking to an appropriate JVM on the running host.
+
+2.3.15. Mass URL Fetching
+
+   The massgeturl package provides facilities to fetch a "massive"
+   number of URLs simultaneously. Additionally, the package provides a
+   number of built-in features that will ease fetching of remote URLs
+   and files in a more generic context.  For the control of fetching
+   "en masse", the package is built upon a fetching queue and new URLs
+   to be got are placed on the queue together with a callback command
+   that will be called back once the URL has been fetched or once
+   fetching attempts have failed (see below). Internally, each host
+   features it own separate queue and massgeturl allows to control the
+   number of total outwards connections (which minimises the burden on
+   the Internet connection) and the total number of connections per
+   host (which minimises the burden on the remote servers). The
+   package will automatically follow redirects and automatically retry
+   a number of times if required and necessary.  All problems during
+   fetching are reported back to the caller through the command being
+   called back with information on the nature of the problem.
+
+2.3.16. URL Information and Content Caching
+
+   Two inter-twined modules provide facilities for remote URL and
+   local files information and content caching. "urlhead" aims at
+   controlling information such as the MIME type, the length or the
+   modification dates of local or remote files. Local files have been
+   included for completion. "urlcache" aims at providing a caching
+   mechanism similar to the one behind most Internet browsers.  Remote
+   URLs are fetched again when their remote modification date and the
+   cached date of the local cached file differ.  Both modules are
+   built on top of the Mass URL fetching facility described in section
+   2.3.15., which allows them to automatically follow redirects and
+   perform several connection attempts if necessary.
+
+2.3.17. Tiny HTTP Server
+
+   The tiny HTTP server is aimed at providing basic HTTP server
+   facilities.  It currently only supports HTTP 1.0 operations.  The
+   module is a heavily modified version of an implementation from an
+   unknown source that attempted to show how simple Tcl/Tk is for
+   implementing such servers.  This implementation of the module is
+   able to server HEAD requests and also provides an implementation
+   for directory listing. The directories that are allowed to be
+   listed and those that have to default to an index HTML file
+   (index.htm usually) is controllable to provide an acceptable level
+   of security.
+
+2.3.18. MIME Type Guessing
+
+   This library provides an implementation of the algorithm behind the
+   Apache web server.  The MIME type of a file is guessed through its
+   extension first, then through peeking a number of bytes from the
+   file and guessing using a number of rules, as with the UNIX file
+   command.  tcllib 1.7 now provides a very similar facility, so the
+   content of this module is of little interest. However, it parses
+   automatically the rule file on startup, which provides better
+   flexibility.
+
+2.3.19. Playlist
+
+   This library is built on top of snack and provides a number of
+   commands to create, order and operate (play, pause, resume, etc.)
+   on playlists.
+
+2.3.20. RSS
+
+   The RSS library is composed of two distinct modules.  The first
+   module is an RSS parser built on top of the XML tree parser.  The
+   parser is rudimentary, but provides supports for enclosures, which
+   was its primary goal. On top of the parser, the library provides a
+   monitoring module that will deliver callbacks on each new and
+   deleted item for a given RSS feed.  The monitoring module is
+   compliant with the latest specification and will follow the "ttl"
+   directive from the feed so as to reduce the burden on the server
+   hosting the RSS feed.  Callbacks will be provided with a token as
+   an argument in a manner that is similar to the standard http
+   package from Tcl.  The content of the item can then be accessed
+   through an upvar command.
+
+2.3.21. Port Number Allocation
+
+   The portsalloc library provides a deterministic way to allocate
+   port numbers in a distributed fashion.  Port numbers are generated
+   from the string describing the service.  Provided a set of
+   processes agree on a common set of services and, thus, strings and
+   allocate the port numbers for these services in the same order,
+   all processes will end up with identical port numbers allocated to
+   the services.
+
+2.4. Testing
+
+   These packages and utilities have been tested under in a real
+   research environment on a daily basis.  However, they have been
+   repackaged for the purpose of the TIL library of packages and
+   utilities and some new bugs might have occured in the process.  The
+   embryo of a test suite is contained in the test sub-directory of
+   the library.  Further documentation is still needed.

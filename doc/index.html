@@ -1,0 +1,1061 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+
+
+
+
+
+
+
+  
+
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  <title>TIL Introduction</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  
+  
+  <meta name="generator" content="WordPress 1.0.1" />
+<!-- leave this for stats -->
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  
+  
+  <style type="text/css" media="screen">
+@import url( style.css );
+  </style><!-- alternate links removed -->
+</head>
+
+
+<body>
+
+
+
+
+
+
+
+
+<div id="rap">
+<h1 id="header">TIL - The Tcl ICE Library</h1>
+
+
+
+
+
+
+
+
+<div id="content">
+<div class="post">
+<div>
+<h1>TIL Introduction</h1>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+<div class="storycontent">
+<p align="left">TIL is a collection of Tcl-only <a href="components.html">libraries and utilities</a> of
+general
+type. Most of these libraries and utilities originates from a number
+of projects where interaction was a key issue and where the
+applications being developed and deployed would run continuously for
+days and, thus, need to perform some level of introspection to check
+the liveness of the system in question.
+</p>
+
+
+
+
+
+
+
+
+<p align="left">
+In general, TIL has three major goals.
+</p>
+
+
+
+
+
+
+
+
+<ol>
+
+
+
+
+
+
+
+
+  <li>
+    
+    
+    
+    
+    
+    
+    
+    <p align="left">Facilitate the development, deployment
+and surveillance of Tcl-based
+distributed applications and systems. </p>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li>
+    
+    
+    
+    
+    
+    
+    
+    <p align="left">Suppress the discrepancies between
+UNIX and Windows when it comes to
+administration and deployment. </p>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li>
+    
+    
+    
+    
+    
+    
+    
+    <p align="left">Demonstrate a design principle that
+consists in writing network-aware
+simple components. These components handle a single and well-defined
+task and an application consists of several of these components,
+assembled on one or several machines. </p>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+</ol>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+<h1>News<br />
+
+
+
+
+
+
+
+</h1>
+
+
+
+
+
+
+<br />
+
+
+
+
+
+
+<h2>14/11/2006</h2>
+
+New Release
+
+
+
+
+
+
+<p>I have made available a new release of the TIL. This is mostly a
+bug-fixing release with very few new additions. The only noticeable
+difference is that TIL will now work better when included in starpacks.
+The initialisation routines contain code that will automatically
+extract modules that contain platform dependent libraries to the local
+(temporary) disk, and amend the loading path so that the disk copy can
+be accessed.</p>
+
+<h2>28/04/2006</h2>
+
+
+
+A few new components and a big commit
+
+
+
+
+
+
+<p>I have finally found some time to synchronise my own working copy of
+the TIL with the CVS and performed a commit that fixes a number of bugs
+that I discovered under the past weeks. Apart from the long (unknown!)
+list of bug fixes, here is what you should know:</p>
+
+
+
+
+
+<ul>
+
+
+
+  <li>autoconnect is a new module that sits on top of permclient and
+automatically disconnects (and reconnects) from remote servers after a
+short time period. I wrote the module when I needed to communicate from
+a handheld device to a main server and realise that keeping the
+connection open at all time wasn't the best solution in wireless
+environments (surprise!)</li>
+
+
+
+  <li>The synchronisation module is now able to synchronise remote HTTP directory hierarchies. I have tested it against <a href="http://httpd.apache.org/">Apache</a>, the <a href="http://www.tcl.tk/software/tclhttpd/">tcl http daemon</a> and the httpd from the TIL.</li>
+
+
+
+  <li>I have tweaked the process module so that it is both able to use the binaries from <a href="http://www.sysinternals.com/Utilities/PsTools.html">sysinternals</a> and the one from the <a href="http://www.teamcti.com/pview/prcview.htm">pv project</a>. The next step would probably to interface directly the pdh.dll library through using something similar to <a href="http://wiki.tcl.tk/15401">winapi</a>.</li>
+
+
+
+</ul>
+
+
+
+<h2>30/01/2006</h2>
+
+
+
+
+
+
+
+ 
+
+<h3 class="storytitle" id="post-28">New Release</h3>
+
+
+
+
+
+
+
+
+
+
+<p>TIL is now released at version 1.1. This is really an interim
+release which consolidates most of the modules and library components.
+Apart from what has been announced here in the past months or so, TIL
+now ships with late-comers components which API has not really
+stabilised yet. These are:</p>
+
+
+
+
+
+<ul>
+
+
+
+
+
+  <li>hostalive: hostalive is a module on top of the ping command. It
+periodically checks for the "presence" of hosts through sending ICMP
+requests and reports when they are off-line (and on-line again). The
+module understands the ping command available on the three major
+platforms: Mac OSX, Linux and Windows. It is capable of being "nice" to
+the network through using low-pace ping commands.</li>
+
+
+
+
+
+  <li>preprocessor: preprocessor is a module to do query/replace on
+files line by line, whenever these lines match a condition. This is
+early work than needs a number of improvements before stabilising.</li>
+
+
+
+
+
+  <li>tax: tax is a tiny xml parser based on a <a href="http://wiki.tcl.tk/14534">parser from the Wiki</a>. This implementation adds the possibility to get to know where tags are in the tree during parsing and is <a href="http://wiki.tcl.tk/15293">explained further in the Wiki</a>.</li>
+
+
+
+
+
+</ul>
+
+
+
+
+
+Unfortunately the manual is still lagging behind, so you will have to "read the code"... 
+<h2>21/10/2005</h2>
+
+
+
+
+
+
+
+ 
+
+<h3 class="storytitle" id="post-28">Even more new components in CVS</h3>
+
+
+
+
+
+
+
+
+
+
+<p>The CVS repository has been updated with a number of bug fixes. Also
+a number of components and routines have been added to the library, these are
+present in the CVS version only for the time being. The main additions and modifications are the following:</p>
+
+
+
+
+
+
+<ul>
+
+
+
+
+
+
+  <li>lockfile: lockfile is a module modelled after and compatible with
+the lockfile command on UNIX systems. The module is able to create
+semaphore files and to wait for the release of the lock. The module has
+undergone few testing and will perhaps be improved later.</li>
+
+
+
+
+
+
+  <li>log rotation: the diskutil module now contains routines to automatically perform rotation of, typically, log files.</li>
+
+
+
+
+
+
+  <li>starter: The service starter is now able to handle starting of
+Java processes in a better way. The syntax of the starting files is
+able to make the difference between arguments that should be given to
+the JVM (typically the classpath) and arguments that should be given to
+the process itself. In theory the same should apply to tcl and tk
+processes.</li>
+
+
+
+
+
+
+  <li>synchro: The synchronisation module has an initial support for
+downloading the header of a remote file and deciding upon its
+synchronisation once the header has been downloaded (and its content
+partly examined).</li>
+
+
+
+
+
+
+  <li>URL caching: Two new utilities have been added to the library.
+One visualises the content of a cache, the other is able to do some
+query/replace operations on the URLs of a cache.</li>
+
+
+
+
+
+
+  <li>Log Viewer: A utility is able to remotely connect to the service
+starter and visualise in real-time the log file of the services that
+are under its control. The log viewer understands the "syntax" of the
+log files, i.e. logs that are generated by the logger library from the
+Tcllib.</li>
+
+
+
+
+
+
+</ul>
+
+
+
+
+
+
+The TIL is now approaching version 1.1 and this should happen within the coming weeks.<br />
+
+
+
+
+
+
+<h2>9/9/2005</h2>
+
+
+
+
+
+
+
+ 
+<div class="post">
+<h3 class="storytitle" id="post-28">New Components added in CVS</h3>
+
+
+
+
+
+
+
+
+
+<div class="storycontent">
+<p>The CVS repository has been updated with a number of bug fixes. Also
+a number of components have been added to the library, these are
+present in the CVS version only for the time being. The new components
+are the following:</p>
+
+
+
+
+
+
+
+<ul>
+
+
+
+
+
+
+
+  <li>accesscontrol: Access control is module modelled after the
+hosts.allow and hosts.deny access control mechanisms found on UNIX
+system. The module handles the control of a number of resources (by
+default the name of the application), from a number of sources. The
+implementation supports both ways found on UNIX systems: separating the
+access control rules in two files or having all control rules in one
+single file, where access or denial are specified by keywords.</li>
+
+
+
+
+
+
+
+  <li>rescacher: Result cacher is a module meant to cache the result of
+invariant lengthy operations. The module stores the command called
+together with its arguments the first time it is called and the cached
+value will be returned next time the same command is called with the
+same arguments.</li>
+
+
+
+
+
+
+
+  <li>uid: The unique identifier module uniquely associate identifier
+to strings throughout the lifetime of any applications. The module
+provides handles any number of pools of unique identifier associations.</li>
+
+
+
+
+
+
+
+</ul>
+
+
+
+
+
+
+<h2>25/8/2005</h2>
+
+
+
+
+
+
+
+ 
+<h3 class="storytitle" id="post-28">Initial Release of the TIL</h3>
+
+
+
+
+
+
+
+
+
+<p>The TIL is now available in its first release to the TCL community. More information about the TIL can be found in the <a href="manual.html">manual</a>. A shorter introduction to the different components forming the TIL is also <a href="components.html">available</a>.</p>
+
+
+
+
+
+
+
+<h2></h2>
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+<br />
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+<div id="menu">
+<ul>
+
+
+
+
+
+
+
+
+  <li id="wordpress">main
+    
+    
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+
+
+      <li><a href="main.html">overview</a> </li>
+
+
+
+
+
+
+
+
+      <li><a href="http://www.sf.net/projects/til">Project
+@ sf</a></li>
+
+
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li id="wordpress">Support
+    
+    
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+
+
+      <li><a href="faq.html"><span style="text-decoration: underline;">faq</span></a></li>
+
+
+
+
+
+
+
+
+      <li><a href="components.html">components</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="manual.html">manual</a></li>
+
+
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li id="wordpress">Download
+    
+    
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+
+
+      <li><a href="license.html">license</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="http://prdownloads.sourceforge.net/til/til.1.2.tgz?download">latest</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="https://sourceforge.net/project/showfiles.php?group_id=146459&amp;package_id=161266&amp;release_id=389410">current</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/project/showfiles.php?group_id=146459">releases</a></li>
+
+
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li id="wordpress">Feedback
+    
+    
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?group_id=146459&amp;atid=765300">bugs
+list</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765300">submit
+bug</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?atid=765303&amp;group_id=146459&amp;func=browse">feature
+requests list</a></li>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net/tracker/?func=add&amp;group_id=146459&amp;atid=765303">Request
+feature</a></li>
+
+
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+  <li id="categories">Hosting
+    
+    
+    
+    
+    
+    
+    
+    <ul>
+
+
+
+
+
+
+
+
+      <li><a href="http://sourceforge.net"><img src="http://sourceforge.net/sflogo.php?group_id=146459&amp;type=1" alt="SourceForge Logo" border="0" height="31" width="88" /> </a></li>
+
+
+
+
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    </ul>
+
+
+
+
+
+
+
+
+  </li>
+
+
+
+
+
+
+
+
+</ul>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+<p class="credit"><cite>theme by&nbsp;<a href="http://www.alexking.org/software/wordpress/styles/sample.php?wpstyle=blue_green"><span style="text-decoration: underline;"><span style="font-weight: bold;">Chris M</span></span></a><a href="http://wordpress.org" title="Powered by WordPress, state-of-the-art semantic personal publishing platform"><strong></strong></a></cite></p>
+
+
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+</body>
+</html>
