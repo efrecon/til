@@ -33,7 +33,7 @@ proc ::minihttpd::validate::init { port } {
     # the first request before ::minihttpd::fullurl returns a good
     # value.
     if { $Server(-selfvalidate) != "" } {
-	::http::register $Server(protocol) $port $Server(socket_cmd)
+	#::http::register $Server(protocol) $port $Server(socket_cmd)
 	set Server(selfvalidation_urls) [list]
 	if { $Server(-externhost) != "" } {
 	    set Server(selfvalidation_urls) \
