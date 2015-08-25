@@ -934,6 +934,43 @@ proc ::minihttpd::data { port sock } {
 }
 
 
+proc ::minihttpd::setHeaders { port sock args } {
+    variable HTTPD
+    variable log
+
+    set idx [lsearch $HTTPD(servers) $port]
+    if { $idx >= 0 } {
+	set varname "::minihttpd::Server_${port}"
+	upvar \#0 $varname Server
+	
+	set idx [lsearch $Server(clients) $sock]
+	if { $idx >= 0 } {
+	    set varname "::minihttpd::Client_${port}_${sock}"
+	    upvar \#0 $varname Client
+
+	    # Transcript current list of headers into temporary array
+	    # (to guarantee we only have one key).
+	    array set HDRS {}
+	    if { [info exists Client(headers)] } {
+		array set HDRS $Client(headers)
+	    }
+	    # Set each key in the arguments, there is no check
+	    # whatsoever.
+	    foreach {k v} $args {
+		set HDRS($k) $v
+	    }
+	    # Remember for next time.
+	    set Client(headers) [array get HDRS]
+	} else {
+	    ${log}::warn "$sock is not a recognised client of $port"
+	}
+    } else {
+	${log}::warn "Not listening for HTTP connections on $port!"
+    }
+    return ""
+}
+
+
 
 # ::minihttpd::__handler_list -- Pretty prints list of internal handlers
 #
@@ -1048,6 +1085,7 @@ proc ::minihttpd::__push { port sock } {
 	    set Client(response) ""
 	    set Client(handler) ""
 	    set Client(responseType) "text/html"
+	    set Client(headers) {}
 
 	    foreach { ptn cb fmt } $Server(handlers) {
 		if { [string match -nocase $ptn $Client(url)] } {
@@ -1107,6 +1145,10 @@ proc ::minihttpd::__push { port sock } {
 		puts $sock "Content-Type: $Client(responseType)"
 		puts $sock \
 		    "Content-Length: [string length $Client(response)]"
+		# Add dynamic headers
+		foreach {k v} $Client(headers) {
+		    puts $sock "$k: [string trim $v]"
+		}
 		puts $sock ""
 		if { $Client(proto) == "HEAD" } {
 		    __finish $port $mypath "" $sock 0

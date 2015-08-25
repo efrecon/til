@@ -1075,6 +1075,8 @@ proc ::websocket::New { sock handler { server 0 } } {
     }
     set Connection(-ping) $WS(-ping)
 
+    ${log}::debug "Created new connection context for socket: $sock"
+
     return $varname
 }
 
@@ -1178,6 +1180,7 @@ proc ::websocket::Connected { opener sock token } {
     }
 
     set ncode [::http::ncode $token]
+    ${log}::debug "Opened connection to remote server with code: $ncode"
     if { $ncode == 101 } {
 	array set HDR [::http::meta $token]
 
