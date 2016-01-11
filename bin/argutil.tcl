@@ -45,7 +45,7 @@ namespace eval ::argutil {
     }
 
     namespace export platform accesslib boolean makelist loadmodules \
-	initargs fix_outlog unwrap
+	initargs fix_outlog unwrap configure
 }
 
 
@@ -571,6 +571,24 @@ proc ::argutil::__isexec { fname } {
 }
 
 
+proc ::argutil::__forbidden { p } {
+    variable AU
+    global tcl_platform
+
+    if { $tcl_platform(platform) ne "windows" } {
+	# On UNIX-like systems, we don't want to start digging
+	# into the OS installed libraries.
+	set d [file dirname [file normalize $p]]
+	foreach ptn [list "/" "/usr" "/usr/lib*" "/var/lib*"] {
+	    if { [string match $ptn $d] } {
+		return 1
+	    }
+	}
+    }
+    return 0
+}
+
+
 # ::argutil::searchlib -- Search lib at version number
 #
 #	This procedure searches for the implementation of a library
@@ -609,19 +627,13 @@ proc ::argutil::searchlib { libname paths { version "" } } {
 	# name match $libname* and list these in libpaths.
 	set libpaths ""
 	foreach p $paths {
-	    if { $tcl_platform(platform) ne "windows" } {
-		# On UNIX-like systems, we don't want to start digging
-		# into the OS installed libraries.
-		set d [file dirname [file normalize $p]]
-		if { [lsearch -exact [list "/" "/usr" "/usr/lib" \
-					  "/usr/lib64"] $d] >= 0 } {
-		    continue
-		}
+	    if { [__forbidden $p] } {
+		continue
 	    }
 	    set libpath [file join [resolve_links $p] "$libname"]
 	    append libpath "*"
 	    __log debug "Checking directory $libpath..."
-	    if { [catch {glob "$libpath"} paths] == 0 } {
+	    if { [catch {glob $libpath} paths] == 0 } {
 		foreach dir $paths {
 		    if { $tcl_platform(platform) ne "windows" \
 			     && [string match "*.lnk" [string tolower $dir]] } {
@@ -632,15 +644,11 @@ proc ::argutil::searchlib { libname paths { version "" } } {
 		    if { [catch {file normalize $rdir} ndir] == 0 } {
 			set rdir $ndir
 		    }
-		    if { $tcl_platform(platform) ne "windows" } {
-			# On UNIX-like systems, we don't want to start digging
-			# into the OS installed libraries.
-			if { [lsearch -exact [list "/" "/usr" "/usr/lib" \
-						  "/usr/lib64"] $d] >= 0 } {
+		    if { [__forbidden $rdir] } {
 			    continue
-			}
 		    }
-		    if { [lsearch $libpaths $rdir] < 0 } {
+		    if { [file exists $rdir]\
+			     && [lsearch $libpaths $rdir] < 0 } {
 			__log debug "Found possible directory: $rdir"
 			lappend libpaths $rdir
 		    }
