@@ -1259,3 +1259,151 @@ proc ::diskutil::lread { fname { divider -1 } { type "file" } } {
 
     return $vals
 }
+
+
+proc ::diskutil::hread { fd_or_fname args } {
+    variable DiskUtil
+    variable log
+
+    # Segragates between file descriptors or file path, arrange for fd
+    # to be a file descriptor where to read from, fail early when
+    # opening the file.
+    if { [catch {fconfigure $fd_or_fname} err] } {
+	${log}::debug "We believe $fd_or_fname is a file path"
+	set fd [open $fd_or_fname]
+    } else {
+	set fd $fd_or_fname
+    }
+
+    # Set default options and do some pretty basic option parsing.
+    array set OPTS {
+	-comments      "\#"
+	-separators    ":"
+	-trim          on
+	-header        ""
+	-command       {}
+    }
+    foreach {k v} $args {
+	if { ![info exists OPTS($k)] } {
+	    return -code error \
+		"$k is an unknown option, should be one of\
+                 [join [array names OPTS] {, }]"
+	}
+	set OPTS($k) $v
+    }
+
+    array set HDR {};  # Will contain the headers, if necessary and requested
+    set content {};    # Will contain a list of the lines composing the content.
+
+    # Initial state is either "reading the HEADERs", either jumping
+    # straight into "reading the CONTENT".
+    set state "HEADER"
+    if { $OPTS(-separators) eq "" } {
+	set state "CONTENT"
+    }
+
+    # Read the file line by line and segregate between header and content
+    set unget ""
+    while {![eof $fd]} {
+	if { $unget ne "" } {
+	    set line $unget
+	    set unget ""
+	} else {
+	    set line [gets $fd]
+	}
+	set tline [string trim $line]
+	
+	switch -- $state {
+	    "HEADER" {
+		# Detect if first character of trimmed line is a
+		# comment character, in which case we'll skip the
+		# line.
+		set comment 0
+		set firstchar [string index $tline 0]
+		foreach c [split $OPTS(-comments) {}] {
+		    if { $c eq $firstchar } {
+			set comment 1
+			break
+		    }
+		}
+
+		if { !$comment } {
+		    if { ([string is true $OPTS(-trim)] \
+			      && $tline eq $OPTS(-header)) \
+			     || ([string is false $OPTS(-trim)] \
+				     && $line eq $OPTS(-header)) } {
+			set state "SEPARATOR"
+			if { $OPTS(-command) ne {} } {
+			    if { [catch {eval [linsert $OPTS(-command) end \
+						   [array get HDR]]} err] } {
+				${log}::warn "Cannot callback with header\
+                                              content: $err"
+			    }
+			}
+		    } else {
+			# Arrange for seps to be a list of pairs
+			# representing the occurence of the separator and
+			# the location of its first occurence in the line.
+			set seps {}
+			foreach s [split $OPTS(-separators) {}] {
+			    set i [string first $s $line]
+			    if { $i >= 0 } {
+				lappend seps [list $s $i]
+			    }
+			}
+
+			# Sort to find the first of the possible
+			# separators, isolate the string before the
+			# separator from the string after the separator,
+			# these will form the key and value for the
+			# header.
+			if { $seps ne {} } {
+			    set seps [lsort -integer -index 1 $seps]
+			    set idx [lindex [lindex $seps 0] 1]
+
+			    set k [string range $line 0 [expr {$idx-1}]]
+			    set v [string range $line [expr {$idx+1}] end]
+			    if { [string is true $OPTS(-trim)] } {
+				set HDR([string trim $k]) [string trim $v]
+			    } else {
+				set HDR($k) $v
+			    }
+			} else {
+			    ${log}::notice "Cannot find any header separator\
+                                        in '$line'"
+			}
+		    }
+		}
+	    }
+	    "SEPARATOR" {
+		if { ([string is true $OPTS(-trim)] \
+			  && $tline ne $OPTS(-header)) \
+			 || ([string is false $OPTS(-trim)] \
+				 && $line ne $OPTS(-header)) } {
+		    set unget $line
+		    set state "CONTENT"; # This will arrange for the
+		    # next branch of the switch
+		    # to trigger
+		}
+	    }
+	    "CONTENT" {
+		if { [string is true $OPTS(-trim)] } {
+		    lappend content $tline
+		} else {
+		    lappend content $line
+		}
+	    }
+	}
+    }
+
+    # Close the file descriptor when we had opened it.
+    if { $fd ne $fd_or_fname } {
+	close $fd
+    }
+
+    if { $OPTS(-command) eq {} } {
+	return [list "headers" [array get HDR] "content" $content]
+    } else {
+	return $content
+    }
+}
