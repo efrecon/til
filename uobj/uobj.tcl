@@ -105,6 +105,10 @@ proc ::uobj::install_log { nmspace lvlstr {dftlvl "warn"} {logstr "log"} {lvlidx
     }
 
     # Now create loglevel procedure in external module.
+    interp alias {} ::${nmspace}::loglevel {} \
+	[namespace current]::__loglevel  $nmspace $lvlstr $logstr $lvlidx
+    return
+
     eval [string map [list @nmspace@ $nmspace \
 			@lvlstore@ $lvlstr \
 			@logstore@ $logstr \
@@ -122,6 +126,15 @@ proc ::uobj::install_log { nmspace lvlstr {dftlvl "warn"} {logstr "log"} {lvlidx
 				return $@lvlstore@(@lvlidx@)
 			    }
 			}]
+}
+
+proc ::uobj::__loglevel { nmspace lvlstore logstore lvlidx {loglvl ""}} {
+    if { $loglvl ne "" } {
+	if { [catch {${nmspace}::${logstore}::setlevel $loglvl}] == 0 } {
+	    set ${nmspace}::${lvlstore}($lvlidx) $loglvl
+	}
+    }
+    return [set ${nmspace}::${lvlstore}($lvlidx)]
 }
 
 
@@ -148,6 +161,11 @@ proc ::uobj::install_defaults { nmspace dftstr } {
     # Trim the namespace name in case
     set nmspace [string trimleft $nmspace ::]
     ${log}::info "Adding support for defaults options to $nmspace"
+
+    interp alias {} ::${nmspace}::defaults {} \
+	[namespace current]::config ::${nmspace}::${dftstr} [list "-*"]
+    
+    return
 
     eval [string map [list @nmspace@ $nmspace @dftstr@ $dftstr] {
 	proc ::@nmspace@::defaults { args } {
