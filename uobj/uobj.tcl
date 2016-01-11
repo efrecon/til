@@ -18,7 +18,7 @@ namespace eval ::uobj {
     variable UOBJ
     if { ! [info exists UOBJ] } {
 	array set UOBJ {
-            comments         "\#!;"
+	    comments         "\#!;"
 	    loglevel         warn
 	    resolv_access    0
 	    resolv_gc_period 10
@@ -93,7 +93,7 @@ proc ::uobj::install_log { nmspace lvlstr {dftlvl "warn"} {logstr "log"} {lvlidx
 	set ::${nmspace}::${logstr} [::logger::init $nmspace]
 	${log}::debug "Started logger as [set ::${nmspace}::${logstr}]"
     }
-    
+
     # Create the index in the global array of the external namespace
     # module and initialise its associated logger module.
     if { ! [info exists ::${nmspace}::${lvlstr}($lvlidx)] } {
@@ -101,27 +101,27 @@ proc ::uobj::install_log { nmspace lvlstr {dftlvl "warn"} {logstr "log"} {lvlidx
 	set l [set ::${nmspace}::${logstr}]
 	${l}::setlevel $dftlvl
 	${log}::debug \
-	    "Created current level storage as ::${nmspace}::${lvlstr}($lvlidx)"
+	  "Created current level storage as ::${nmspace}::${lvlstr}($lvlidx)"
     }
 
     # Now create loglevel procedure in external module.
     eval [string map [list @nmspace@ $nmspace \
-			  @lvlstore@ $lvlstr \
-			  @logstore@ $logstr \
-			  @lvlidx@ $lvlidx] {
-	proc ::@nmspace@::loglevel { {loglvl ""} } {
-	    variable @lvlstore@
-	    variable @logstore@
+			@lvlstore@ $lvlstr \
+			@logstore@ $logstr \
+			@lvlidx@ $lvlidx] {
+			    proc ::@nmspace@::loglevel { {loglvl ""} } {
+				variable @lvlstore@
+				variable @logstore@
 
-	    if { $loglvl ne "" } {
-		if { [catch {${@logstore@}::setlevel $loglvl}] == 0 } {
-		    set @lvlstore@(@lvlidx@) $loglvl
-		}
-	    }
+				if { $loglvl ne "" } {
+				    if { [catch {${@logstore@}::setlevel $loglvl}] == 0 } {
+					set @lvlstore@(@lvlidx@) $loglvl
+				    }
+				}
 
-	    return $@lvlstore@(@lvlidx@)
-	}
-    }]
+				return $@lvlstore@(@lvlidx@)
+			    }
+			}]
 }
 
 
@@ -211,7 +211,7 @@ proc ::uobj::config { obj_p pattns args } {
 	foreach {opt value} $args {        ;# Get one or set some
 	    if { [lsearch $alloptions $opt] == -1 } {
 		return -code error \
-		    "Unknown option $opt, must be: [join $alloptions ", " ]"
+		  "Unknown option $opt, must be: [join $alloptions ", " ]"
 	    }
 	    if { [llength $args] == 1 } {  ;# Get one config value
 		set result $Object($opt)
@@ -260,7 +260,7 @@ proc ::uobj::configure { obj_p args } {
 	    }
 	} else {
 	    return -code error \
-		"Unknown options $opt, should be: [join $opts ", "]"
+	      "Unknown options $opt, should be: [join $opts ", "]"
 	}
     }
 
@@ -288,14 +288,14 @@ proc ::uobj::cget { obj_p opt } {
 
     # Get to the array
     upvar $obj_p Object
-    
+
     # Return the value of the option or an error.
     set opts [array names Object -*]
     if { [lsearch $opts $opt] >= 0 } {
 	return $Object($opt)
     } else {
 	return -code error \
-		"Unknown options $opt, should be: [join $opts ", "]"
+	  "Unknown options $opt, should be: [join $opts ", "]"
     }
 }
 
@@ -388,6 +388,41 @@ proc ::uobj::diff { obj1_p obj2_p {patterns "-*"} {restrict ""}} {
 }
 
 
+proc ::uobj::mdefault { key val } {
+    variable UOBJ
+    variable log
+
+    set k [split $key "."]
+
+	if { [llength $k] >= 2 } {
+	    set opt "-[lindex $k end]"
+	    set module [join [lrange $k 0 end-1] "::"]
+	    if { [string range $module 0 1] ne "::" } {
+		set nmspace "::$module"
+	    } else {
+		set nmspace "$module"
+	    }
+	    if { [namespace exists $nmspace] } {
+		if { [info commands ${nmspace}::defaults] ne "" } {
+		    if { [catch {${nmspace}::defaults $opt $val} err] } {
+			${log}::warn "Could not set ${key} to $val: $err"
+		    } else {
+			return [list ${module} ${opt}]
+		    }
+		} else {
+		    ${log}::warn "No defaults for $module"
+		}
+	    } else {
+		${log}::warn "ERROR, no namespace $module"
+	    }
+	} else {
+	    ${log}::warn "Configuration specification $key has\
+			  erroneous format"
+	}
+	
+    return {}
+}
+
 # ::uobj::readconfig -- Read and apply configuration parameters.
 #
 #	This procedure reads configuration parameters from a file
@@ -412,7 +447,7 @@ proc ::uobj::diff { obj1_p obj2_p {patterns "-*"} {restrict ""}} {
 proc ::uobj::readconfig { fname } {
     variable UOBJ
     variable log
-    
+
     set dfts [list]
     ${log}::info "Reading configuration file from '$fname'"
     if { [catch {open $fname} fd] } {
@@ -425,34 +460,9 @@ proc ::uobj::readconfig { fname } {
 		if { [string first $firstchar $UOBJ(comments)] < 0 } {
 		    set key [lindex $line 0]
 		    set val [lindex $line 1]
-		    set k [split $key "."]
-
-		    if { [llength $k] >= 2 } {
-			set opt "-[lindex $k end]"
-			set module [join [lrange $k 0 end-1] "::"]
-			if { [string range $module 0 1] ne "::" } {
-			    set nmspace "::$module"
-			} else {
-			    set nmspace "$module"
-			}
-			if { [namespace exists $nmspace] } {
-			    if { [info commands ${nmspace}::defaults] ne "" } {
-				if { [catch {${nmspace}::defaults $opt \
-						 $val} err] } {
-				    ${log}::warn "Could not set ${key}\
-                                                  to $val: $err"
-				} else {
-				    lappend dfts ${module} ${opt}
-				}
-			    } else {
-				${log}::warn "No defaults for $module"
-			    }
-			} else {
-			    ${log}::warn "ERROR, no namespace $module"
-			}
-		    } else {
-			${log}::warn "Configuration specification $key has\
-                                      erroneous format"
+		    foreach {module opt} [mdefault $key $val] break
+		    if { $module ne "" } {
+			lappend dfts $module $opt
 		    }
 		}
 	    }
@@ -603,7 +613,7 @@ proc ::uobj::deserialize { ary_p fd_or_n {pterns "-*"} {rstrict ""} } {
 	    }
 	}
     }
-		
+
     # Close the file if the second parameter was a file name.
     if { $fd ne $fd_or_n } {
 	close $fd
@@ -629,7 +639,7 @@ proc ::uobj::readoptions { ary_p fd_or_n {allowedkeys ""} } {
     } else {
 	set fd $fd_or_n
     }
- 
+
     upvar $ary_p OBJECT
     if { $allowedkeys eq "" } {
 	set allowedkeys [array names OBJECT "-*"]
@@ -679,13 +689,48 @@ proc ::uobj::readoptions { ary_p fd_or_n {allowedkeys ""} } {
     if { $fd ne $fd_or_n } {
 	close $fd
     }
-    
+
     # Return the valid keys that were read.
     return $readkeys
 }
 
 
+proc ::uobj::__dispatch { obj ns method args } {
+    if { [string match \[a-z\] [string index $method 0]] } {
+	return [uplevel 1 [list namespace inscope ${ns} $method $obj] $args]
+    } else {
+	return -code error "$method is internal to $ns!"
+    }
+}
+
+proc ::uobj::__rdispatch { obj ns methods method args } {
+    set ns [string trimright ${ns} :]
+    foreach meths $methods {
+	foreach m $meths {
+	    if { [string equal $m $method] } {
+		# Look for all possible candidates since we want to be able
+		# to support aliases.
+		foreach candidate $meths {
+		    if { [info commands ${ns}::$candidate] ne "" } {
+			# If we've found the implementation of the command
+			# execute it
+			return [uplevel 1 \
+				  [list [namespace current]::__dispatch $obj $ns $candidate] $args]
+		    }
+		}
+		return -code error "Cannot find any implementation for $method in $ns!"
+	    }
+	}
+    }
+    return -code error "$method is not allowed in $obj!"
+}
+
 proc ::uobj::objectify { o commands } {
+    interp alias {} $o {} \
+      [namespace current]::__rdispatch $o [namespace qualifiers $o] $commands
+}
+
+proc ::uobj::objectify:old { o commands } {
     proc $o { cmd args } [string map [list @o@ $o @c@ $commands] {
 	set passed 0
 	foreach cgrp {@c@} {
@@ -693,11 +738,11 @@ proc ::uobj::objectify { o commands } {
 		if { $cmd eq [lindex $c 0] } {
 		    set passed 1
 		    return [eval [namespace current]::[lindex $cgrp 0] \
-				@o@ [lrange $c 1 end] $args]
+			      @o@ [lrange $c 1 end] $args]
 		}
 	    }
 	}
-	
+
 	if { ! $passed } {
 	    return -code error "$cmd is not a command recognised by @o@,\
                                 accepted commands are [join {@c@} ", "]"
@@ -1082,7 +1127,7 @@ proc ::uobj::keyword { o key {value "--dO_Not|Set=Value--"}} {
     } else {
 	array set ASSOCS [list]
     }
-    
+
     # Get rid of % signs around the key and remember current value, if
     # any.
     set key [string trim $key "%"]
@@ -1144,7 +1189,9 @@ proc ::uobj::resolve { o path { override {} } } {
 	    set fname [regsub -all "%${k}%" $fname $LR($k)]
 	}
     }
-    ${log}::debug "Resolved '$path' to '$fname'"
+    if { $path ne "" && $path ne $fname } {
+	${log}::debug "Resolved '$path' to '$fname'"
+    }
 
     return $fname
 }
