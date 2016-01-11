@@ -77,7 +77,7 @@ proc ::outlog::loglevel { { loglvl "" } } {
 #
 # Side Effects:
 #	None.
-proc ::outlog::open { logfile { rotate -1 } { keep 4 } { maxsize -1 } } {
+proc ::outlog::open { logfile { rotate -1 } { keep 4 } { maxsize -1 } { inactivity -1} } {
     variable OutLog
     variable log
 
@@ -90,6 +90,7 @@ proc ::outlog::open { logfile { rotate -1 } { keep 4 } { maxsize -1 } } {
 	if { $Log(logfile) == $logfile } {
 	    set Log(rotate) $rotate
 	    set Log(keep) $keep
+	    set Log(inactivity) $inactivity
 	    return  $id
 	}
     }
@@ -119,12 +120,46 @@ proc ::outlog::open { logfile { rotate -1 } { keep 4 } { maxsize -1 } } {
     set Log(rotate) $rotate
     set Log(keep) $keep
     set Log(maxsize) $maxsize
+    set Log(inactivity) $inactivity
+    set Log(timer) ""
+    if { $Log(inactivity) > 0 } {
+	set Log(timer) [after $Log(inactivity) [namespace current]::__close $id]
+    }
 
     lappend OutLog(logs) $id
 
     return $id
 }
 
+
+proc ::outlog::__close { id } {
+    variable OutLog
+    variable log
+
+    # Check that this is one of our outlog objects.
+    set idx [lsearch $OutLog(logs) $id]
+    if { $idx < 0 } {
+	${log}::error "$id is not the identifier of an outlog!"
+	return
+    }
+    
+    # Get to the global that contains all necessary information
+    set varname "::outlog::__outlog_$id"
+    upvar \#0 $varname Log
+
+    # Close file descriptor if it is opened
+    if { $Log(fd) != "" } {
+	${log}::info "Spontaneously closing file descriptor to $Log(logfile),\
+	              no activity for $Log(inactivity) ms."
+	if { [catch "::close $Log(fd)" err] != 0 } {
+	    ${log}::warn "Could not properly close $Log(logfile): $err"
+	}
+	set Log(fd) ""	
+    }
+    
+    # Remember we've triggered so we won't try to cancel an inexisting timer.
+    set Log(timer) ""
+}
 
 
 # ::outlog::puts --
@@ -158,6 +193,15 @@ proc ::outlog::puts { id line { norotation 0 } } {
     # Get to the global that contains all necessary information
     set varname "::outlog::__outlog_$id"
     upvar \#0 $varname Log
+
+    # Schedule automatic closing of file descriptor in near future, if
+    # necessary.
+    if { $Log(inactivity) > 0 } {
+	if { $Log(timer) != "" } {
+	    after cancel $Log(timer)
+	}
+	set Log(timer) [after $Log(inactivity) [namespace current]::__close $id]
+    }
 
     # Record current time and initialise
     set now [clock seconds]
@@ -361,6 +405,9 @@ proc ::outlog::close { id } {
 	${log}::notice "Log $Log(logfile) successfully closed for output"
     } else {
 	${log}::warn "Could not close $Log(logfile) properly"
+    }
+    if { $Log(timer) != "" } {
+	after cancel $Log(timer)
     }
     set OutLog(logs) [lreplace $OutLog(logs) $idx $idx]
     unset Log
