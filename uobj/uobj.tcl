@@ -130,7 +130,7 @@ proc ::uobj::install_log { nmspace lvlstr {dftlvl "warn"} {logstr "log"} {lvlidx
 
 proc ::uobj::__loglevel { nmspace lvlstore logstore lvlidx {loglvl ""}} {
     if { $loglvl ne "" } {
-	if { [catch {${nmspace}::${logstore}::setlevel $loglvl}] == 0 } {
+	if { [catch {[set ${nmspace}::${logstore}]::setlevel $loglvl}] == 0 } {
 	    set ${nmspace}::${lvlstore}($lvlidx) $loglvl
 	}
     }
