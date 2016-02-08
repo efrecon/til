@@ -425,6 +425,31 @@ proc ::cmdserver::new { port cmds cbs { name "" } { sockcmd "socket" } } {
 }
 
 
+proc ::cmdserver::get { servid what } {
+    variable CMDS
+    variable log
+
+    # Check that this is really one of our servers
+    if { [lsearch -exact $CMDS(servers) $servid] < 0 } {
+	${log}::error "Server $servid has disappeared"
+	return ""
+    }
+ 
+    # Get to its information
+    set varname "::cmdserver::__Server_$servid"
+    upvar \#0 $varname Server
+
+    switch -nocase -- $what {
+	"socket" {
+	    return $Server(sock)
+	}
+	"clients" {
+	    return $Server($what)
+	}
+    }
+    return ""
+}
+
 # ::cmdserver::getcmds --
 #
 #	Return the list of commands associated to a server, except
