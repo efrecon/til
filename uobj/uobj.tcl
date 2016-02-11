@@ -715,7 +715,7 @@ proc ::uobj::readoptions { ary_p fd_or_n {allowedkeys ""} } {
 
 proc ::uobj::__dispatch { obj ns method args } {
     if { [string match \[a-z\] [string index $method 0]] } {
-	return [uplevel 1 [list namespace inscope ${ns} $method $obj] $args]
+	return [uplevel 1 [linsert $args 0 ${ns}::${method} $obj]]
     } else {
 	return -code error "$method is internal to $ns!"
     }
@@ -733,7 +733,7 @@ proc ::uobj::__rdispatch { obj ns methods method args } {
 			# If we've found the implementation of the command
 			# execute it
 			return [uplevel 1 \
-				  [list [namespace current]::__dispatch $obj $ns $candidate] $args]
+				  [linsert $args 0 [namespace current]::__dispatch $obj $ns $candidate]]
 		    }
 		}
 		return -code error "Cannot find any implementation for $method in $ns!"
