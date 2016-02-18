@@ -52,6 +52,7 @@ set options {
     { authorization.arg "" "Multiple of three list or @ followed by path to file, empty to switch off: URL matching pattern, realm, list of user:pass" }
     { pki.arg "" "List of two (resolvable) paths to files: the public and private key for the server (will switch to HTTPS serving)"}
     { hostname.arg "" "Which hostname the server is responding to (empty for good guess)" }
+    { ranges.arg {0.0.0.0/0 ::/0} "List of IP ranges of client addresses allowed, in CIDR notation" }
 }
 
 set inited [::argutil::initargs HTTPD $options]
@@ -81,7 +82,9 @@ if { [string index $HTTPD(authorization) 0] eq "@" } {
 set rootdir [::diskutil::fname_resolv $HTTPD(root)]
 set logfile [::diskutil::fname_resolv $HTTPD(logfile)]
 set cmd [list ::minihttpd::new $rootdir $HTTPD(port) \
-			 -logfile $logfile -dirlist $HTTPD(allow)]
+			-logfile $logfile \
+			-dirlist $HTTPD(allow) \
+			-ranges $HTTPD(ranges)]
 if { $HTTPD(authorization) ne "" } {
     lappend cmd -authorization $HTTPD(authorization)
 }

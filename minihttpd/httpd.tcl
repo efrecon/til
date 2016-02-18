@@ -17,6 +17,7 @@ package require http
 package require base64
 package require html
 package require sha1
+package require ip
 #package require tls; # We will request it on demand to make this a
 #soft constraint on the HTTP package.
 
@@ -46,6 +47,7 @@ namespace eval ::minihttpd {
 	    -externhost      ""
 	    -pki             ""
 	    -authorization   ""
+	    -ranges          {0.0.0.0/0 ::/0}
 	}
 	variable log [::logger::init [string trimleft [namespace current] ::]]
 	${log}::setlevel $HTTPD(loglevel)
@@ -358,6 +360,55 @@ proc ::minihttpd::__disconnect { port sock } {
     }
 }
 
+# ::minihttpd::__allowed -- Check IP authorisation
+#
+#       Check if the (incoming) IP address is allowed to connect to this server.
+#       This routine considers the different ranges in CIDR notations that are
+#       specified as part of the -ranges option of the server. It properly
+#       differentiates between IPv6 and IPv4 addresses and automatically remove
+#       any scope ID that could be present (necessary for self-hostname
+#       detection).
+#
+# Arguments:
+#	port	Port number of one of our HTTP servers
+#	ipaddr	IP address to check.
+#
+# Results:
+#       1 if client at IP address is allowed, 0 otherwise.
+#
+# Side Effects:
+#       None.
+proc ::minihttpd::__allowed { port ipaddr } {
+    variable HTTPD
+    variable log
+
+    set idx [lsearch $HTTPD(servers) $port]
+    if { $idx >= 0 } {
+	set varname "::minihttpd::Server_${port}"
+	upvar \#0 $varname Server
+	
+	# Check if client is allowed to connect, i.e. among one of the IP ranges
+	# specified in -ranges.
+	${log}::debug "Checking if client at $ipaddr is allowed"
+	set ipaddr [regsub {%\w+$} $ipaddr ""];  # Remove Scope ID, see http://superuser.com/questions/99746/why-is-there-a-percent-sign-in-the-ipv6-address
+	foreach range $Server(-ranges) {
+	    if { [::ip::version $range] eq [::ip::version $ipaddr] } {
+		set mask [::ip::mask $range]
+		if { $mask eq "" } {
+		    if { [::ip::equal $ipaddr $range] } {
+			return 1
+		    }
+		} else {
+		    if { [::ip::equal $ipaddr/$mask $range] } {
+			return 1
+		    }
+		}
+	    }
+	}
+    }
+    return 0
+}
+
 
 # ::minihttpd::__accept -- Accept client connections
 #
@@ -383,20 +434,25 @@ proc ::minihttpd::__accept { s_port sock ipaddr port} {
     if { $idx >= 0 } {
 	set varname "::minihttpd::Server_${s_port}"
 	upvar \#0 $varname Server
-	
-	set varname "::minihttpd::Client_${s_port}_${sock}"
-	upvar \#0 $varname Client
-
-	fconfigure $sock \
-	    -blocking $Server(-sockblock) \
-	    -buffersize $Server(-bufsize) \
-	    -translation {auto crlf}
-	set Client(sock) $sock
-	set Client(ipaddr) $ipaddr
-	__translog $Server(port) $sock Connect $ipaddr $port
-	lappend Server(clients) $sock
-	__hostname $s_port $sock
-	fileevent $sock readable [list ::minihttpd::__pull $s_port $sock]
+		
+	if { [__allowed $s_port $ipaddr] } {	
+	    set varname "::minihttpd::Client_${s_port}_${sock}"
+	    upvar \#0 $varname Client
+    
+	    fconfigure $sock \
+		-blocking $Server(-sockblock) \
+		-buffersize $Server(-bufsize) \
+		-translation {auto crlf}
+	    set Client(sock) $sock
+	    set Client(ipaddr) $ipaddr
+	    __translog $Server(port) $sock Connect $ipaddr $port
+	    lappend Server(clients) $sock
+	    __hostname $s_port $sock
+	    fileevent $sock readable [list ::minihttpd::__pull $s_port $sock]
+	} else {
+	    ::close $sock
+	    ${log}::warn "Incoming client at $ipaddr was rejected"
+	}
     } else {
 	${log}::warn "Not listening for HTTP connections on $port!"
     }
