@@ -52,7 +52,7 @@ set options {
     { authorization.arg "" "Multiple of three list or @ followed by path to file, empty to switch off: URL matching pattern, realm, list of user:pass" }
     { pki.arg "" "List of two (resolvable) paths to files: the public and private key for the server (will switch to HTTPS serving)"}
     { hostname.arg "" "Which hostname the server is responding to (empty for good guess)" }
-    { ranges.arg {0.0.0.0/0 ::/0} "List of IP ranges of client addresses allowed, in CIDR notation" }
+    { ranges.arg {0.0.0.0/0 ::/0} "List of IP ranges of client addresses allowed, in CIDR notation; or @ followed by path to file" }
 }
 
 set inited [::argutil::initargs HTTPD $options]
@@ -78,6 +78,10 @@ if { [string index $HTTPD(authorization) 0] eq "@" } {
     set fname [string trim [string range $HTTPD(authorization) 1 end]]
     set HTTPD(authorization) [::diskutil::lread $fname 3 \
 				    "Authorization Specification"]
+}
+if { [string index $HTTPD(ranges) 0] eq "@" } {
+    set fname [string trim [string range $HTTPD(ranges) 1 end]]
+    set HTTPD(ranges) [::diskutil::lread $fname 1 "CIDR Ranges"]
 }
 set rootdir [::diskutil::fname_resolv $HTTPD(root)]
 set logfile [::diskutil::fname_resolv $HTTPD(logfile)]
