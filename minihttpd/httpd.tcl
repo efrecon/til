@@ -22,7 +22,7 @@ package require dns
 #package require tls; # We will request it on demand to make this a
 #soft constraint on the HTTP package.
 
-package provide minihttpd 1.3
+package provide minihttpd 1.4
 
 package require minihttpd::dirlist
 package require minihttpd::validate
