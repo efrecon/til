@@ -8,6 +8,6 @@
 # script is sourced, the variable $dir must contain the
 # full path name of this file's directory.
 
-package ifneeded minihttpd 1.3 [list source [file join $dir httpd.tcl]]
+package ifneeded minihttpd 1.4 [list source [file join $dir httpd.tcl]]
 package ifneeded minihttpd::dirlist 1.0 [list source [file join $dir dirlisting.tcl]]
 package ifneeded minihttpd::validate 1.0 [list source [file join $dir validate.tcl]]

@@ -18,6 +18,7 @@ package require base64
 package require html
 package require sha1
 package require ip
+package require dns
 #package require tls; # We will request it on demand to make this a
 #soft constraint on the HTTP package.
 
@@ -49,6 +50,7 @@ namespace eval ::minihttpd {
 	    -authorization   ""
 	    -ranges          {0.0.0.0/0 ::/0}
 	    -ciphers         {tls1 tls1.1 tls1.2}
+	    -resolver        300
 	}
 	variable log [::logger::init [string trimleft [namespace current] ::]]
 	${log}::setlevel $HTTPD(loglevel)
@@ -388,9 +390,26 @@ proc ::minihttpd::__allowed { port ipaddr } {
 	
 	# Check if client is allowed to connect, i.e. among one of the IP ranges
 	# specified in -ranges.
-	${log}::debug "Checking if client at $ipaddr is allowed"
 	set ipaddr [regsub {%\w+$} $ipaddr ""];  # Remove Scope ID, see http://superuser.com/questions/99746/why-is-there-a-percent-sign-in-the-ipv6-address
-	foreach range $Server(-ranges) {
+
+	# Either we pick the list of IP addresses from the range cache, which
+	# will occur as soon as we have hostnames in the cache and as soon as
+	# they've started to be resolved. Or we pick from the original -ranges,
+	# which occurs before any resolution has occured or when there are no
+	# hostnames in the list.
+	if { [info exists Server(ranges)] } {
+	    set ranges $Server(ranges)
+	} else {
+	    set ranges $Server(-ranges)
+	}
+	${log}::debug "Checking if client at $ipaddr is within following\
+	               ranges: $ranges"
+	
+	# Go through each range and compare only apple and apple, i.e. we
+	# compare v4 addresses against v4 ranges, for example. ::ip::version
+	# gently returns -1 on something else than an address (such as a
+	# hostname!), so the test works in all cases.
+	foreach range $ranges {
 	    if { [::ip::version $range] eq [::ip::version $ipaddr] } {
 		set mask [::ip::mask $range]
 		if { $mask eq "" } {
@@ -1379,6 +1398,99 @@ proc ::minihttpd::config { port args } {
 	}
 	set Server($opt) $value         ;# Set the config value
     }
+    
+    foreach rg $Server(-ranges) {
+	# If the range really seems like a hostname, start polling for its name
+	# and resolve it to an address at regular intervals. We have no support
+	# for removal of hostnames at this point.
+	if { ![regexp {\d+.\d+.\d+.\d+} $rg] && [regexp {\w+.\w+} $rg] } {
+	    set h [namespace current]::Hostname_$rg
+	    if { ![info exists $h] } {
+		upvar \#0 $h HOSTNAME
+		set HOSTNAME(name) $rg
+		set HOSTNAME(ip) ""
+		__hst_resolve $h
+	    }
+	}
+    }
+}
+
+
+proc ::minihttpd::__hst_commit {} {
+    variable HTTPD
+    variable log
+    
+    foreach port $HTTPD(servers) {
+	set varname "::minihttpd::Server_${port}"
+	upvar \#0 $varname Server
+	
+	set Server(ranges) [list]
+	foreach rg $Server(-ranges) {
+	    if { ![regexp {\d+.\d+.\d+.\d+} $rg] && [regexp {\w+.\w+} $rg] } {
+		set h [namespace current]::Hostname_$rg
+		if { [info exists $h] } {
+		    upvar \#0 $h HOSTNAME
+		    if { $HOSTNAME(ip) ne "" } {
+			lappend Server(ranges) $HOSTNAME(ip)
+		    }
+		}
+	    } else {
+		lappend Server(ranges) $rg
+	    }
+	}
+    }
+}
+
+
+proc ::minihttpd::__hst_resolved { h tok } {
+    variable HTTPD
+    variable log
+    
+    if { ![info exists $h] } {
+	${log}::warn "Hostname context $h does not exist"
+	return
+    }
+
+    upvar \#0 $h HOSTNAME
+    if { $HOSTNAME(ip) eq "" } {
+	set rndstart 1
+    } else {
+	set rndstart 0
+    }
+    if { [::dns::status $tok] eq "ok" } {
+	set HOSTNAME(ip) [::dns::address $tok]
+	${log}::debug "Host $HOSTNAME(name) is at $HOSTNAME(ip), updating server caches"
+	__hst_commit
+    } else {
+	${log}::notice "Could not resolve $HOSTNAME(name): [::dns::error $tok]"
+    }
+    ::dns::cleanup $tok
+    
+    if { $rndstart } {
+        set when [expr {int($HTTPD(-resolver)*1000*rand())}]	
+    } else {
+        set when [expr {int($HTTPD(-resolver)*1000)}]
+    }
+    ${log}::debug "Next resolution will occur in $when ms."
+    set HOSTNAME(timer) \
+	    [after $when [list [namespace current]::__hst_resolve $h]]
+}
+
+
+proc ::minihttpd::__hst_resolve { h } {
+    variable HTTPD
+    variable log
+    
+    if { ![info exists $h] } {
+	${log}::warn "Hostname context $h does not exist"
+	return
+    }
+    
+    upvar \#0 $h HOSTNAME
+    ${log}::info "Resolving $HOSTNAME(name) to place in cache"
+    set HOSTNAME(token) \
+	    [::dns::resolve $HOSTNAME(name) \
+			-command [list [namespace current]::__hst_resolved $h]]
 }
 
 
