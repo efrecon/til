@@ -90,9 +90,9 @@ set cmd [list ::minihttpd::new $rootdir $HTTPD(port) \
 			-logfile $logfile \
 			-dirlist $HTTPD(allow) \
 			-ranges $HTTPD(ranges)]
-foreach opt [list authorization pki ciphers hostname] {
+foreach {opt copt} [list authorization authorization pki pki ciphers ciphers hostname externhost] {
     if { $HTTPD($opt) ne "" } {
-	lappend cmd -$opt $HTTPD($opt)
+	lappend cmd -[string trimleft $copt -] $HTTPD($opt)
     }
 }
 
