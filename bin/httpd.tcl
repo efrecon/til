@@ -51,6 +51,7 @@ set options {
     { allow.arg "*" "Directories allowed for listing" }
     { authorization.arg "" "Multiple of three list or @ followed by path to file, empty to switch off: URL matching pattern, realm, list of user:pass" }
     { pki.arg "" "List of two (resolvable) paths to files: the public and private key for the server (will switch to HTTPS serving)"}
+    { ciphers.arg "" "List of ciphers (e.g. tls1, ssl3, etc.) to support, empty for good default" }
     { hostname.arg "" "Which hostname the server is responding to (empty for good guess)" }
     { ranges.arg {0.0.0.0/0 ::/0} "List of IP ranges of client addresses allowed, in CIDR notation; or @ followed by path to file" }
 }
@@ -89,14 +90,10 @@ set cmd [list ::minihttpd::new $rootdir $HTTPD(port) \
 			-logfile $logfile \
 			-dirlist $HTTPD(allow) \
 			-ranges $HTTPD(ranges)]
-if { $HTTPD(authorization) ne "" } {
-    lappend cmd -authorization $HTTPD(authorization)
-}
-if { $HTTPD(pki) ne "" } {
-    lappend cmd -pki $HTTPD(pki)
-}
-if { $HTTPD(hostname) ne "" } {
-    lappend cmd -externhost $HTTPD(hostname)
+foreach opt [list authorization pki ciphers hostname] {
+    if { $HTTPD($opt) ne "" } {
+	lappend cmd -$opt $HTTPD($opt)
+    }
 }
 
 # Start the server.

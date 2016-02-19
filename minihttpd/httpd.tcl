@@ -45,9 +45,10 @@ namespace eval ::minihttpd {
 	    -sockblock       0
 	    -selfvalidate    hostname
 	    -externhost      ""
-	    -pki             ""
+	    -pki             {}
 	    -authorization   ""
 	    -ranges          {0.0.0.0/0 ::/0}
+	    -ciphers         {tls1 tls1.1 tls1.2}
 	}
 	variable log [::logger::init [string trimleft [namespace current] ::]]
 	${log}::setlevel $HTTPD(loglevel)
@@ -154,49 +155,49 @@ proc ::minihttpd::new {root port args} {
     # done so.
     set proto "http"
     set socket_cmd "::socket"
-    foreach {opt arg} $args {
-	if { [string match -nocase -pki $opt] && $arg != "" } {
-	    # Lazy require TLS package to make sure we can run the
-	    # whole HTTPD server without encryption support in other
-	    # cases
-	    package require tls
+    array set ARGS [array get HTTPD -*]
+    array set ARGS $args
+    if { [llength $ARGS(-pki)] >= 2 } {
+	# Lazy require TLS package to make sure we can run the
+	# whole HTTPD server without encryption support in other
+	# cases
+	package require tls
 
-	    # Extract public and private key files from the option
-	    # -pki, these can be resolved.
-	    foreach {certfile keyfile} $arg break
-	    set certfile [::diskutil::fname_resolv $certfile]
-	    set keyfile [::diskutil::fname_resolv $keyfile]
-	    if { ! [file readable $certfile] } {
-		${log}::error "Cannot access public key file: $certfile"
-		return -1
-	    }
-	    if { ! [file readable $keyfile] } {
-		${log}::error "Cannot access private key file: $certfile"
-		return -1
-	    }
-	    # Now initialise and make sure we remember that we are
-	    # running https instead of http on that port.  Support as
-	    # many protocols as possible to make sure we can serve as
-	    # most clients as possible, even though we know sslv2 has
-	    # some vulnerability issues.
-	    foreach proto {ssl2 ssl3 tls1} {
-		if { [catch {::tls::ciphers $proto} ciphers] } {
+	# Extract public and private key files from the option
+	# -pki, these can be resolved.
+	foreach {certfile keyfile} $ARGS(-pki) break
+	set certfile [::diskutil::fname_resolv $certfile]
+	set keyfile [::diskutil::fname_resolv $keyfile]
+	if { ! [file readable $certfile] } {
+	    ${log}::error "Cannot access public key file: $certfile"
+	    return -1
+	}
+	if { ! [file readable $keyfile] } {
+	    ${log}::error "Cannot access private key file: $certfile"
+	    return -1
+	}
+	# Now initialise and make sure we remember that we are
+	# running https instead of http on that port.  Support as
+	# many protocols as possible to make sure we can serve as
+	# most clients as possible, even though we know sslv2 has
+	# some vulnerability issues.
+	foreach proto $ARGS(-ciphers) {
+	    if { [catch {::tls::ciphers $proto} ciphers] } {
+		::tls::init -$proto 0
+		${log}::warn "No support for $proto under HTTPS"
+	    } else {
+		if { [llength $ciphers] > 0 } {
+		    ::tls::init -$proto 1
+		    ${log}::notice "HTTPS will have support for $proto"
+		} else {
 		    ::tls::init -$proto 0
 		    ${log}::warn "No support for $proto under HTTPS"
-		} else {
-		    if { [llength $ciphers] > 0 } {
-			::tls::init -$proto 1
-			${log}::notice "HTTPS will have support for $proto"
-		    } else {
-			::tls::init -$proto 0
-			${log}::warn "No support for $proto under HTTPS"
-		    }
 		}
 	    }
-	    ::tls::init -certfile $certfile -keyfile $keyfile
-	    set proto "https"
-	    set socket_cmd ::tls::socket
 	}
+	::tls::init -certfile $certfile -keyfile $keyfile
+	set proto "https"
+	set socket_cmd ::tls::socket	
     }
 
     # Positive port will force serving there, check once and return if
@@ -239,6 +240,7 @@ proc ::minihttpd::new {root port args} {
     set varname "::minihttpd::Server_${port}"
     upvar \#0 $varname Server
 
+    array set Server [array get HTTPD -*]
     set Server(port) $port
     if { $root != "" } {
 	set Server(root) [::diskutil::absolute_path $root]
@@ -254,9 +256,6 @@ proc ::minihttpd::new {root port args} {
     set Server(live) "";         # WebSocket server state
     set Server(protocol) $proto
     set Server(socket_cmd) $socket_cmd
-    foreach opt [array names HTTPD "-*"] {
-	set Server($opt) $HTTPD($opt)
-    }
     lappend HTTPD(servers) $port
     eval config $port $args
 
