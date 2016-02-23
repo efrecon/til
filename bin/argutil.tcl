@@ -825,6 +825,9 @@ proc ::argutil::accesslib { libname { version "" } { first 0 } } {
 		} else {
 		    lappend auto_path $d
 		}
+		if { [catch {::tcl::tm::add $d} err] } {
+		    __log warn "Could not add $d to module path: $err"
+		}
 		lappend added_dirs $d
 	    }
 	}
@@ -834,6 +837,9 @@ proc ::argutil::accesslib { libname { version "" } { first 0 } } {
 		set auto_path [linsert $auto_path 0 $fullpath]
 	    } else {
 		lappend auto_path $fullpath
+	    }
+	    if { [catch {::tcl::tm::add $fullpath} err] } {
+		__log warn "Could not add $fullpath to module path: $err"
 	    }
 	    lappend added_dirs $fullpath
 	}
