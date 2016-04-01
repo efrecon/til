@@ -20,6 +20,8 @@ namespace eval ::uobj {
 	array set UOBJ {
 	    comments         "\#!;"
 	    loglevel         warn
+	    header           "\n"
+	    indent           "  "
 	    resolv_access    0
 	    resolv_gc_period 10
 	}
@@ -406,6 +408,19 @@ proc ::uobj::diff { obj1_p obj2_p {patterns "-*"} {restrict ""}} {
 }
 
 
+proc ::uobj::stacktrace {} {
+    variable UOBJ
+    variable log
+    
+    set stack $UOBJ(header)
+    for {set i 1} {$i < [info level]} {incr i} {
+        append stack [string repeat $UOBJ(indent) $i][info level -$i]
+        append stack "\n"
+    }
+    return $stack
+}
+
+
 proc ::uobj::mdefault { key val } {
     variable UOBJ
     variable log
@@ -788,6 +803,7 @@ proc ::uobj::isa { o { types "" } } {
 
     if { [info vars $o] eq "" } {
 	${log}::warn "$o is not an existing object"
+	${log}::debug [stacktrace]
 	return 0
     }
 
@@ -795,6 +811,7 @@ proc ::uobj::isa { o { types "" } } {
     if { [llength $types] > 0 && [lsearch $types $type] < 0 } {
 	${log}::warn "$o is an object of type $type, none of\
                       [join $types ", "]"
+	${log}::debug [stacktrace]
 	return 0
     }
 
