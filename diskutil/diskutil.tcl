@@ -629,6 +629,9 @@ proc ::diskutil::global_platform_tmp {} {
 	    }
 	} else {
 	    set dirlist [list "/usr/tmp" "/var/tmp"]
+	    if { [info exists env(TMPDIR)] } {
+		lappend dirlist [file join $env(TMPDIR)]
+	    }
 	}
 
 	# Parse the list of possible temporary directories and try to
