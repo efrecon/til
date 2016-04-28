@@ -20,7 +20,7 @@
 package require Tcl 8.2
 package require logger
 
-package provide diskutil 1.8
+package provide diskutil 1.9
 
 namespace eval ::diskutil {
     
@@ -35,6 +35,8 @@ namespace eval ::diskutil {
 	    comments           "\#"
 	    empty              {\"\" \{\} -}
 	    dft_prgpath        ""
+	    resolvers          {::tcl_platform "" 0 * ::env "" 1 *}
+	    idgene             0
 	}
 	variable log [::logger::init diskutil]
 	${log}::setlevel $DiskUtil(loglevel)
@@ -45,6 +47,7 @@ namespace eval ::diskutil {
     namespace export platform_tmp temporary_filename temporary_file
     namespace export temporary_directory clean_directory
     namespace export concat_files fname_resolv normalize rotate
+    namespace export fname_resolve resolver
 }
 
 
@@ -722,6 +725,45 @@ proc ::diskutil::concat_files { dst_file in_files } {
 }
 
 
+# ::diskutil::__mapper -- Sugared array content mapper
+#
+#       This procedure takes the content of an array and arranges for all the
+#       instances of the names of the array (surrounded by a marker sign) to be
+#       replaced by their value in the incoming string. The procedure is also
+#       able to add a prefix to all indices for replacement, and to filter only
+#       a subset of the array.
+#
+# Arguments:
+#	str	String in which to perform replacements
+#	array_p	Name of array with which to perform replacements
+#	pfx	String to prefix to all indices before they are replaced
+#	nocase	1 for case insensiteness detection of indice-based keys.
+#	filter	Filter for array indices, only matching indices to be considered
+#	marker	Marker sign to surround the indice sub-strings to be detected
+#		and replaced.
+#
+# Results:
+#       The string where all occurences of the indices of the array, prefixed
+#       and surrounded by the marker have been replaced by the value of the
+#       indice.
+#
+# Side Effects:
+#       None.
+proc ::diskutil::__mapper { str array_p {pfx ""} {nocase 0} {filter *} {marker %} } {
+    set mapper [list]
+    upvar $array_p ARY
+    foreach i [array names ARY $filter] {
+	lappend mapper ${marker}${pfx}${i}${marker} $ARY($i)
+    }
+    if { $nocase } {
+	return [string map -nocase $mapper $str]
+    } else {
+	return [string map $mapper $str]
+    }
+    return "";  # Never reached
+}
+
+
 # ::diskutil::fname_resolv --
 #
 #	Replace %key% strings in a series of filenames and return the
@@ -734,7 +776,9 @@ proc ::diskutil::concat_files { dst_file in_files } {
 #	%progname% - the raw name of the executable being run, without
 #	extension, nor directory name.  An argument allows to use
 #	another alternative path for %progname% and %progdir%, but
-#	these keys will default to using the global argv0 variable.
+#       these keys will default to using the global argv0 variable. It is
+#       possible to register additional resolvers for the keys being recognised,
+#       see resolver for details.
 #
 # Arguments:
 #	fnames	(list of) file names.
@@ -759,30 +803,26 @@ proc ::diskutil::fname_resolv { fnames { dynamic {} } { prgpath "" } } {
 	foreach {prgpath dynamic} [list $dynamic $prgpath] break
     }
 
-
     # Start by insert dynamic and user keys, do this at ONCE to make
     # sure they have precedence.
-    foreach {k v} $dynamic {
-	regsub -all "%${k}%" $fnames $v fnames
+    array set DYN $dynamic
+    set fnames [__mapper $fnames DYN]
+    
+    # Then go on with all known resolvers, this includes support for ::env and
+    # ::tcl_platform, as these are setup by default
+    foreach {resolver pfx nocase filter} $DiskUtil(resolvers) {
+	upvar \#0 $resolver ARY;   # Access array at toplevel
+	set fnames [__mapper $fnames ARY $pfx $nocase $filter]
     }
     
-    # Replace the content of any index in the tcl_platform array
-    foreach name [array names tcl_platform] {
-	regsub -all "%${name}%" $fnames $tcl_platform($name) fnames
-    }
-
-    # Replace the content of any index in the env array
-    foreach name [array names env] {
-	regsub -all "%${name}%" $fnames $env($name) fnames
-	set upname [string toupper $name]
-	regsub -all "%${upname}%" $fnames $env($name) fnames
-    }
-
+    # Now construct a final BUILTIN array that contains indices to various other
+    # good things to have when trying to resolve path names...
+    
     # Provides support for "%hostname%"
     if { [info commands "::dnsresolv::hostname"] != "" } {
-	regsub -all "%hostname%" $fnames [::dnsresolv::hostname] fnames
+	set BUILTIN(hostname) [::dnsresolv::hostname]
     } else {
-	regsub -all "%hostname%" $fnames [info hostname] fnames
+	set BUILTIN(hostname) [info hostname]
     }
 
     # Provides support for "%progdir%", when no specific program path
@@ -803,17 +843,79 @@ proc ::diskutil::fname_resolv { fnames { dynamic {} } { prgpath "" } } {
 	}
 	set prgpath $DiskUtil(dft_prgpath)
     }
-    regsub -all "%progdir%" $fnames [file dirname $prgpath] fnames
-    regsub -all "%progname%" $fnames [file rootname [file tail $prgpath]] fnames
+    set BUILTIN(progdir) [file dirname $prgpath]
+    set BUILTIN(progname) [file rootname [file tail $prgpath]]
 
     # Emulates some well-known environment variables when not on windows.
     if { $tcl_platform(platform) ne "windows" } {
-	regsub -all "%APPDATA%" $fnames "$DiskUtil(winemu_dir)/AppData" fnames
-	regsub -all "%LOCALAPPDATA%" $fnames "$DiskUtil(winemu_dir)/Local" \
-	    fnames
+	set BUILTIN(APPDATA) [file join $DiskUtil(winemu_dir) AppData]
+	set BUILTIN(LOCALAPPDATA) [file join $DiskUtil(winemu_dir) Local
     }
 
-    return $fnames
+    return [__mapper $fnames BUILTIN]
+}
+
+
+# ::diskutil::fname_resolve -- Same as fname_resolv
+#
+#       Wrapper to call fname_resolv and fix spelling
+#
+# Arguments:
+#	args	Same as fname_resolv
+#
+# Results:
+#       See fname_resolv
+#
+# Side Effects:
+#       None.
+proc ::diskutil::fname_resolve {args} {
+    return [uplevel 1 [linsert $args 0 [namespace current]::fname_resolv]
+}
+
+
+# ::diskutil::resolver -- Add resolver for fname_resolv
+#
+#       This procedure can be used to globally modify the behaviour of
+#       fname_resolv(e) and to add a set of (dynamic) keys/values to be
+#       recognised when performing substitutions in the file names. The
+#       implementation recognises two types of additional resolver: the dynamic
+#       content of a globally accessible array, or an even-long (static) list of
+#       keys and their values.
+#
+# Arguments:
+#	r	Resolver, name of global array or even-long list
+#	type	ARRAY or LIST
+#	pfx	String to prefix to all keys associated to this resolver when
+#		substitution occurs.
+#	nocase	Set to true to perform case insensitve substitution for resolver
+#	filter	Glob-style filter to match against the keys to consider for
+# 		substitution.
+#
+# Results:
+#       None.
+#
+# Side Effects:
+#       Will modify the future behaviour of all calls to fname_resolv.
+proc ::diskutil::resolver { r {type "ARRAY"} {pfx ""} {nocase off} {filter *} } {
+    variable DiskUtil
+    variable log
+
+    set type [string toupper $type]
+    switch -- $type {
+	"ARRAY" {
+	    lappend DiskUtil(resolvers) \
+		    $r $pfx [string is true $nocase] $filter	    
+	}
+	"LIST" {
+	    set vname [namespace current]::__resolver_storage_[incr DiskUtil(idgene)]
+	    array set $vname $r
+	    lappend DiskUtil(resolvers) \
+		    $vname $pfx [string is true $nocase] $filter	    
+	}
+	default {
+	    ${log}::warn "$type is unknown!"			
+	}
+    }
 }
 
 
