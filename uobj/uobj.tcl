@@ -728,35 +728,68 @@ proc ::uobj::readoptions { ary_p fd_or_n {allowedkeys ""} } {
 }
 
 
-proc ::uobj::__dispatch { obj ns method args } {
-    if { [string match \[a-z\] [string index $method 0]] } {
-	return [uplevel 1 [linsert $args 0 ${ns}::${method} $obj]]
-    } else {
-	return -code error "$method is internal to $ns!"
+
+if { $::tcl_version >= 8.6 } {
+    proc ::uobj::__dispatch { obj ns method args } {
+	if { [string match \[a-z\] [string index $method 0]] } {
+	    tailcall ${ns}::${method} $obj {*}$args
+	} else {
+	    return -code error "$method is internal to $ns!"
+	}
+    }    
+
+    proc ::uobj::__rdispatch { obj ns methods method args } {
+	set ns [string trimright ${ns} :]
+	foreach meths $methods {
+	    foreach m $meths {
+		if { [string equal $m $method] } {
+		    # Look for all possible candidates since we want to be able
+		    # to support aliases.
+		    foreach candidate $meths {
+			if { [info commands ${ns}::$candidate] ne "" } {
+			    # If we've found the implementation of the command
+			    # execute it
+			    tailcall __dispatch $obj $ns $candidate {*}$args
+			}
+		    }
+		    return -code error "Cannot find any implementation for $method in $ns!"
+		}
+	    }
+	}
+	return -code error "$method is not allowed in $obj!"
+    }
+} else {
+    proc ::uobj::__dispatch { obj ns method args } {
+	if { [string match \[a-z\] [string index $method 0]] } {
+	    return [uplevel 1 [linsert $args 0 ${ns}::${method} $obj]]
+	} else {
+	    return -code error "$method is internal to $ns!"
+	}
+    }
+    
+    proc ::uobj::__rdispatch { obj ns methods method args } {
+	set ns [string trimright ${ns} :]
+	foreach meths $methods {
+	    foreach m $meths {
+		if { [string equal $m $method] } {
+		    # Look for all possible candidates since we want to be able
+		    # to support aliases.
+		    foreach candidate $meths {
+			if { [info commands ${ns}::$candidate] ne "" } {
+			    # If we've found the implementation of the command
+			    # execute it
+			    return [uplevel 1 \
+				      [linsert $args 0 [namespace current]::__dispatch $obj $ns $candidate]]
+			}
+		    }
+		    return -code error "Cannot find any implementation for $method in $ns!"
+		}
+	    }
+	}
+	return -code error "$method is not allowed in $obj!"
     }
 }
 
-proc ::uobj::__rdispatch { obj ns methods method args } {
-    set ns [string trimright ${ns} :]
-    foreach meths $methods {
-	foreach m $meths {
-	    if { [string equal $m $method] } {
-		# Look for all possible candidates since we want to be able
-		# to support aliases.
-		foreach candidate $meths {
-		    if { [info commands ${ns}::$candidate] ne "" } {
-			# If we've found the implementation of the command
-			# execute it
-			return [uplevel 1 \
-				  [linsert $args 0 [namespace current]::__dispatch $obj $ns $candidate]]
-		    }
-		}
-		return -code error "Cannot find any implementation for $method in $ns!"
-	    }
-	}
-    }
-    return -code error "$method is not allowed in $obj!"
-}
 
 proc ::uobj::objectify { o commands } {
     interp alias {} $o {} \
