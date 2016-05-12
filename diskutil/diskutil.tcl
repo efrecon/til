@@ -849,7 +849,7 @@ proc ::diskutil::fname_resolv { fnames { dynamic {} } { prgpath "" } } {
     # Emulates some well-known environment variables when not on windows.
     if { $tcl_platform(platform) ne "windows" } {
 	set BUILTIN(APPDATA) [file join $DiskUtil(winemu_dir) AppData]
-	set BUILTIN(LOCALAPPDATA) [file join $DiskUtil(winemu_dir) Local
+	set BUILTIN(LOCALAPPDATA) [file join $DiskUtil(winemu_dir) Local]
     }
 
     return [__mapper $fnames BUILTIN]
@@ -869,7 +869,7 @@ proc ::diskutil::fname_resolv { fnames { dynamic {} } { prgpath "" } } {
 # Side Effects:
 #       None.
 proc ::diskutil::fname_resolve {args} {
-    return [uplevel 1 [linsert $args 0 [namespace current]::fname_resolv]
+    return [uplevel 1 [linsert $args 0 [namespace current]::fname_resolv]]
 }
 
 
