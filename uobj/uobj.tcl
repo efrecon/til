@@ -729,7 +729,7 @@ proc ::uobj::readoptions { ary_p fd_or_n {allowedkeys ""} } {
 
 
 
-if { $::tcl_version >= 8.6 } {
+if { [llength [info commands tailcall]] } {
     proc ::uobj::__dispatch { obj ns method args } {
 	if { [string match \[a-z\] [string index $method 0]] } {
 	    tailcall ${ns}::${method} $obj {*}$args
