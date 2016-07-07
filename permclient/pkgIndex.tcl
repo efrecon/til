@@ -8,5 +8,5 @@
 # script is sourced, the variable $dir must contain the
 # full path name of this file's directory.
 
-package ifneeded autoconnect 0.2 [list source [file join $dir autoconnect.tcl]]
+package ifneeded autoconnect 0.3 [list source [file join $dir autoconnect.tcl]]
 package ifneeded permclient 1.0 [list source [file join $dir permclient.tcl]]
