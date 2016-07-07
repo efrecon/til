@@ -115,14 +115,16 @@ proc ::websocket::Disconnect { sock } {
     variable WS
 
     set varname [namespace current]::Connection_$sock
-    upvar \#0 $varname Connection
-
-    if { $Connection(liveness) ne "" } {
-	after cancel $Connection(liveness)
+    if { [info exists $varname] } {
+	upvar \#0 $varname Connection
+    
+	if { $Connection(liveness) ne "" } {
+	    after cancel $Connection(liveness)
+	}
+	Push $sock disconnect "Disconnected from remote end"
+	catch {::close $sock}
+	unset $varname
     }
-    Push $sock disconnect "Disconnected from remote end"
-    catch {::close $sock}
-    unset $varname
 }
 
 
@@ -288,7 +290,7 @@ proc ::websocket::Ping { sock } {
 #       Keep connections alive (from the server side by construction),
 #       as suggested by the specification.  This procedure arranges to
 #       send pings after a given period of inactivity within the
-#       socket.  This ties to ensure that all equipment keep the
+#       socket.  This tries to ensure that all equipment keep the
 #       connection open.
 #
 # Arguments:
@@ -1034,6 +1036,7 @@ proc ::websocket::Receiver { sock } {
 #	sock	Socket to remote end
 #	handler	Handler callback
 #	server	Is this a server or a client socket
+#	peernm	Peername list (addr, hostname, port)
 #
 # Results:
 #       Return the internal name of the array storing connection
@@ -1043,7 +1046,7 @@ proc ::websocket::Receiver { sock } {
 #       This procedure will reinitialise the connection information
 #       for the socket if it was already known.  This is on purpose
 #       and by design, but worth noting.
-proc ::websocket::New { sock handler { server 0 } } {
+proc ::websocket::New { sock handler { server 0 } { peernm {} } } {
     variable WS
     variable log
 
@@ -1054,8 +1057,16 @@ proc ::websocket::New { sock handler { server 0 } } {
     set Connection(handler) $handler
     set Connection(server) $server
 
-    set Connection(peername) 0.0.0.0
-    set Connection(sockname) 127.0.0.1
+    # Don't reset the peername cache if we already had relevant information
+    # there
+    if { [info exists Connection(peername)] } {
+	if { [llength $peernm] } {
+	    set Connection(peername) $peernm
+	}
+    } else {
+	set Connection(peername) $peernm
+    }
+    set Connection(sockname) [list]
     
     set Connection(read:mode) ""
     set Connection(read:msg) ""
@@ -1078,6 +1089,56 @@ proc ::websocket::New { sock handler { server 0 } } {
     ${log}::debug "Created new connection context for socket: $sock"
 
     return $varname
+}
+
+
+# ::websocket::__netinfo -- Cache network information
+#
+#       Actively get socket-related information (peername or sockname) and cache
+#       the information in the connection array.
+#
+# Arguments:
+#	sock	Existing opened socket.
+#	nfo	What to get (-peername or -sockname, dash optional)
+#	force	Force renewal of cached information
+#
+# Results:
+#       Preferrably the name of the host, otherwise the IP address.
+#
+# Side Effects:
+#       None.
+proc ::websocket::__netinfo { sock nfo { force 0 } } {
+    variable WS
+    variable log
+
+    set varname [namespace current]::Connection_$sock
+    if { ! [::info exists $varname] } {
+        ${log}::warn "$sock is not a WebSocket connection anymore"
+        ThrowError "$sock is not a WebSocket"
+    }
+    upvar \#0 $varname Connection
+
+    # Actively get or settle on value in cache.
+    set nfo [string trimleft $nfo -]
+    if { [llength $Connection($nfo)] == 0 || $force } {
+	if { [catch {fconfigure $sock -$nfo} sockinfo] == 0 } {
+	    set Connection($nfo) $sockinfo
+	    ${log}::debug "Stored $nfo information as: $Connection($nfo)"
+	} else {
+	    ${log}::warn "Cannot get $nfo information from socket: $sockinfo"
+	}
+    }
+
+    # Return the name, if available, otherwise the IP address.
+    set nm ""
+    if { [llength $Connection($nfo)] } {
+	set nm [lindex $Connection($nfo) 1]
+	if { $nm eq "" } {
+	    set nm [lindex $Connection($nfo) 0]
+	}
+    }
+    
+    return $nm
 }
 
 
@@ -1112,24 +1173,6 @@ proc ::websocket::takeover { sock handler { server 0 } { info {} }} {
     set varname [New $sock $handler $server]
     upvar \#0 $varname Connection
     set Connection(state) CONNECTED
-
-    # Gather information about local and remote peer.
-    if { [catch {fconfigure $sock -peername} sockinfo] == 0 } {
-	set Connection(peername) [lindex $sockinfo 1]
-	if { $Connection(peername) eq "" } {
-	    set Connection(peername) [lindex $sockinfo 0]
-	}
-    } else {
-	${log}::warn "Cannot get remote information from socket: $sockinfo"
-    }
-    if { [catch {fconfigure $sock -sockname} sockinfo] == 0 } {
-	set Connection(sockname) [lindex $sockinfo 1]
-	if { $Connection(sockname) eq "" } {
-	    set Connection(sockname) [lindex $sockinfo 0]
-	}
-    } else {
-	${log}::warn "Cannot get local information from socket: $sockinfo"
-    }
 
     # Listen to incoming traffic on socket and make sure we ping if
     # necessary.
@@ -1463,8 +1506,33 @@ proc ::websocket::open { url handler args } {
     } else {
 	set sock [HTTPSocket $token]
 	if { $sock ne "" } {
-	    # Create connection context.
-	    New $sock $handler
+	    # Try understanding the destination as a URL, regular expression below is
+	    # taken from the http implementation.
+	    set URLmatcher {(?x)		# this is _expanded_ syntax
+		^
+		(?: (\w+) : ) ?			# <protocol scheme>
+		(?: //
+		    (?:
+			(
+			    [^@/\#?]+		# <userinfo part of authority>
+			) @
+		    )?
+		    (				# <host part of authority>
+			[^/:\#?]+ |		# host name or IPv4 address
+			\[ [^/\#?]+ \]		# IPv6 address in square brackets
+		    )
+		    (?: : (\d+) )?		# <port part of authority>
+		)?
+		( [/\?] [^\#]*)?		# <path> (including query)
+		(?: \# (.*) )?			# <fragment>
+		$
+	    }
+	    if { ! [regexp -- $URLmatcher $url -> proto user host port srvurl] } {
+		set host "";  # Unklikely...
+	    }
+	    # Create connection context (cheat a peername information so we'll
+	    # speed up things. Reverse lookup on windows takes ages).
+	    New $sock $handler 0 [list "" $host $port]
 	    if { $timeout > 0 } {
 		set OPEN(timeout) \
 		    [after $timeout [list [namespace current]::Timeout $varname $token]]
@@ -1517,11 +1585,11 @@ proc ::websocket::conninfo { sock what } {
     
     switch -glob -nocase -- $what {
         "peer*" {
-            return $Connection(peername)
+	    return [__netinfo $sock -peername]
         }
         "sockname" -
         "name" {
-            return $Connection(sockname)
+	    return [__netinfo $sock -sockname]
         }
         "close*" {
             return [expr {$Connection(state) eq "CLOSED"}]
@@ -1572,6 +1640,7 @@ proc ::websocket::find { { host * } { port * } } {
     set socks [list]
     foreach varname [::info vars [namespace current]::Connection_*] {
         upvar \#0 $varname Connection
+	__netinfo $Connection(sock) -peername
         foreach {ip hst prt} $Connection(peername) break
         if { ([string match $host $ip] || [string match $host $hst]) \
                  && [string match $port $prt] } {
