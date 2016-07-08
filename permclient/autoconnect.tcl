@@ -4,16 +4,29 @@
 #	and provides with two essential functions: sending and getting
 #	information, i.e. asynchronous and synchronous communication
 #       with the remote server. In addition, it allows connecting to a command
-#       server that is being wrapped through websockify.
+#       server that is being wrapped through websockify, thus implementing the
+#       same kind of semantics over websockets instead.
+#
+#       Connections are identified by their canonicalized URL. The module is
+#       *almost* backwards compatible with a prior version that was solely built
+#       on top of the permclient library. In this prior version, a remote server
+#       was identified by a hostname and port, separated using a range of
+#       different "good" separators. This old syntax is automatically recognised
+#       and replaced by tcp://hostname:port/ canonicalised URLs.
+#
+#       Note that callbacks delivered on command (line) reception have changed
+#       as they take the URL and the line as arguments only in this new version.
 #
 # Copyright (c) 2004-2006 by the Swedish Institute of Computer Science.
 #
 # See the file "license.terms" for information on usage and redistribution
 # of this file, and for a DISCLAIMER OF ALL WARRANTIES.
 
+
 package require Tcl 8.4
 package require logger
 
+package require uobj
 package require permclient
 package require websocket
 
@@ -28,18 +41,27 @@ namespace eval ::autoconnect {
 	    syncs           {}
 	    passthrough_tcp {-poll -block -proxy}
 	    passthrough_ws  {-binary -blocksize -channel -headers -keepalive -method -myaddr -progress -protocol -query -queryblocksize -querychannel -queryprogress -strict -timeout -type}
-	    passthrough_lib {-autooff -wrapper -unwrapper}
+	    passthrough_lib {-autooff -wrapper -unwrapper -framing}
+	    hints           {}
 	    dft_timeout     5000
 	    dft_mark        "__T_I_M_E_O_U_T__"
 	}
-	array set HINTS {}
 	variable log [::logger::init [string trimleft [namespace current] :]]
 	${log}::setlevel $AC(loglevel)
     }
 
-    namespace export send get loglevel hints
+    namespace export send get loglevel hints receiver
 }
 
+
+# TODO:
+#
+# Make this even more general, since most of the code for permclient and
+# websocket is very similar. The procedures and commands to use could be given
+# to autoconnect, perhaps through plugins?
+#
+# Implement http support so we can do ::autoconnect::get http://xxx and get back
+# the result once done
 
 # ::autoconnect::loglevel -- Set/Get current log level.
 #
@@ -68,14 +90,13 @@ proc ::autoconnect::loglevel { { loglvl "" } } {
 
 # ::autoconnect::__dispatch -- Dispatch incoming line
 #
-#       Dispatch data that has been received from the host and port to the
+#       Dispatch data that has been received from the remote URL to the
 #       receivers, whenever the incoming data matches the pattern that was
 #       associated with the receiver.
 #
 # Arguments:
-#	host	Remote host sending the information
-#	port	Port at which we are connected at the remote host.
-#	id	Identifier of the connection (permclient or websocket)
+#	cx	Identifier of the connection
+#	id	Low-level identifier of the connection (permclient or websocket)
 #	line	Incoming command/info
 #
 # Results:
@@ -83,24 +104,27 @@ proc ::autoconnect::loglevel { { loglvl "" } } {
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::__dispatch { host port id line } {
+proc ::autoconnect::__dispatch { cx id line } {
     variable AC
     variable log
 
+    if { ![::uobj::isa $cx connection] } {
+	return -code error "$cx unknown or wrong type"
+    }
+    upvar \#0 $cx CONN
+
     # Mediate back to the caller if requested.
-    foreach {h p cmd s} $AC(syncs) {
-	if { $h eq $host && $p == $port } {
+    foreach {u cmd s} $AC(syncs) {
+	if { $u eq $CONN(url) } {
 	    switch -- $cmd {
 		"SET" {
 		    set $s $line
 		}
 		"CB" {
 		    # Replace command by its wrapped version, if relevant
-		    if { [info exists [namespace current]::unwrapper_${id}] } {
-			upvar \#0 [namespace current]::unwrapper_$id unwrapper
-			
-			if { [llength $unwrapper] } {
-			    if { [catch {eval [linsert $unwrapper end $line]} res] } {
+		    if { [info exists CONN(unwrapper)] } {
+			if { [llength $CONN(unwrapper)] } {
+			    if { [catch {eval [linsert $CONN(unwrapper) end $line]} res] } {
 				${log}::warn "Could not execute unwrapper on line: $res"
 			    } else {
 				set line $res
@@ -110,7 +134,7 @@ proc ::autoconnect::__dispatch { host port id line } {
 
 		    foreach {cb ptn} $s break
 		    if { [string match $ptn $line] } {
-			if { [catch {eval [linsert $cb end $host $port $line]} err] } {
+			if { [catch {eval [linsert $cb end $CONN(url) $line]} err] } {
 			    ${log}::warn \
 				"Error when calling back '$cb' on $line: $err"
 			}
@@ -122,33 +146,6 @@ proc ::autoconnect::__dispatch { host port id line } {
 }
 
 
-# ::autoconnect::__incoming -- Internal callback for server comm. arrival
-#
-#	This procedure receives data from a remote server.  It
-#	mediates back this information to the caller when a ::get call
-#	is pending.
-#
-# Arguments:
-#	id	Identifier of ::permclient:: connection to server.
-#	line	Line coming from server.
-#
-# Results:
-#	None
-#
-# Side Effects:
-#	None.
-proc ::autoconnect::__incoming { id line } {
-    variable AC
-    variable log
-
-    # Guess where information is coming from.
-    foreach {sock host port} [::permclient::info $id] {}
-    ${log}::debug "Received from ${host}:${port}: $line"
-
-    __dispatch $host $port $id $line
-}
-
-
 # ::autoconnect::__ws_handler -- Handler for websockets.
 #
 #       Handles life-time websocket connection events, i.e. incoming data,
@@ -156,9 +153,8 @@ proc ::autoconnect::__incoming { id line } {
 #       of connections goes to __connected.
 #
 # Arguments:
-#	host	Remote host sending the information
-#	port	Port at which we are connected at the remote host.
-#	id	Identifier of the websocket connection
+#	cx	Identifier of the connection
+#	sock	Low-level identifier of the websocket connection
 #	type	Type of the event
 #	line	Incoming command/info
 #
@@ -167,16 +163,22 @@ proc ::autoconnect::__incoming { id line } {
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::__ws_handler { host port id type line } {
+proc ::autoconnect::__ws_handler { cx sock type line} {
     variable AC
     variable log
 
+    if { ![::uobj::isa $cx connection] } {
+	return -code error "$cx unknown or wrong type"
+    }
+    upvar \#0 $cx CONN
+
     switch $type {
 	"connect" {
-	    __connected "ws" $id ""
+	    __connected $cx $sock $sock;   # The identifier is the socket
 	}
-	"text" {
-	    __dispatch $host $port $id $line
+	"text" -
+	"binary" {
+	    __dispatch $cx $sock $line
 	}
     }
 }
@@ -186,18 +188,18 @@ proc ::autoconnect::__ws_handler { host port id type line } {
 #
 #	Arrange so that a command will be called back every time a
 #	line matching the pattern passed as an argument is received
-#	from a remote client, as long as the connection exists.  Opens
+#	from a remote URL, as long as the connection exists.  Opens
 #	the connection if necessary.
 #
 # Arguments:
 #	dest	Remote server in the form of a host and a port,
-#	        separated by one of :, |, / space or tab.
+#	        separated by one of :, |, / space or tab, or URL.
 #	cb	Callback
 #	ptn	Pattern for command
-#	retry	How often to retry opening the connection
+#	args	Additional command-line arguments to the send
 #
 # Results:
-#	None
+#	1 on success, 0 on failure
 #
 # Side Effects:
 #	None.
@@ -205,56 +207,56 @@ proc ::autoconnect::receiver { dest cb ptn args } {
     variable AC
     variable log
 
-    # Split host and port of destination and push information to the
-    # synchronisation queue.
-    foreach {proto host port} [__split $dest] break
-    if { $proto ne "" && $host ne "" && $port ne "" } {
+    set url [__canonicalize $dest]
+    if { $url ne "" } {
 	set already 0
-	foreach { h p t l } $AC(syncs) {
-	    if { $h eq $host && $p == $port && $l eq [list $cb $ptn] } {
+	foreach { u t l } $AC(syncs) {
+	    if { $u eq $url && $l eq [list $cb $ptn] } {
 		set already 1
 		break
 	    }
 	}
 
 	if { ! $already } {
-	    lappend AC(syncs) $host $port CB [list $cb $ptn]
+	    lappend AC(syncs) $url CB [list $cb $ptn]
 	    eval [linsert $args 0 ::autoconnect::send $dest ""]
 	}
+	
+	return 1
     }
+    return 0
 }
 
 
-# ::autoconnect::__disconnect -- Disconnect a client
+# ::autoconnect::__disconnect -- Disconnect a connection
 #
-#	Disconnects an existing client.
+#	Disconnects an existing connection
 #
 # Arguments:
-#	id	Identifier of permanent client.
+#	id	Identifier of the connection.
 #
 # Results:
 #	None
 #
 # Side Effects:
 #	None.
-proc ::autoconnect::__disconnect { id proto } {
+proc ::autoconnect::__disconnect { cx } {
     variable AC
     variable log
 
-    set varname [namespace current]::autooff_${id}
-    if { [info exists $varname] } {
-	unset $varname
+    if { ![::uobj::isa $cx connection] } {
+	return -code error "$cx unknown or wrong type"
     }
+    upvar \#0 $cx CONN
 
-    switch -glob -- [string tolower $proto] {
+    switch -glob -- $CONN(proto) {
 	"ws*" {
-	    ${log}::info "Auto-disconnecting"
-	    ::websocket::close $id
+	    ${log}::info "Auto-disconnecting from $CONN(url)"
+	    ::websocket::close $CONN(id)
 	}
 	"tcp" {
-	    foreach {sock host port} [::permclient::info $id] {}
-	    ${log}::info "Auto-disconnecting from ${host}:${port}"
-	    ::permclient::delete $id
+	    ${log}::info "Auto-disconnecting from $CONN(url)"
+	    ::permclient::delete $CONN(id)
 	}
     }
 }
@@ -265,36 +267,38 @@ proc ::autoconnect::__disconnect { id proto } {
 #       remote server.
 #
 # Arguments:
-#	proto	Protocol (ws* or tcp)
-#	id	Identifier of the connection (depends on protocol)
-#	sock	Socket to server (for permclient)
+#	cx	Identifier of the connection
+#	id	Low-level identifier of the connection (permclient/websocket)
+#	sock	Socket to server
 #
 # Results:
 #       None.
 #
 # Side Effects:
 #       Send as many commands as there are in the pending queue
-proc ::autoconnect::__connected { proto id sock } {
+proc ::autoconnect::__connected { cx {id "" } {sock ""}} {
     variable AC
     variable log
 
-    ${log}::debug "Connected to client $id, flushing sending queue"
-    set varname [namespace current]::__cmdqueue_${id}
-    if { [info exists $varname] } {
-	upvar \#0 $varname Queue
-
-	foreach cmd $Queue {
-	    __write $id $proto $cmd
-	}
-	unset Queue
+    if { ![::uobj::isa $cx connection] } {
+	return -code error "$cx unknown or wrong type"
     }
+    upvar \#0 $cx CONN
+
+    ${log}::debug "Connected to $CONN(url), flushing sending queue"
+    foreach cmd $CONN(queue) {
+	__write $cx $cmd
+    }
+    set CONN(queue) [list]
+    set CONN(sock) $sock
 }
 
 
 # ::autoconnect::__passthrough -- Collect relevant options
 #
 #       Collect protocol (or library) relevant options that can be passed
-#       further to the connection opening commands.
+#       further to the connection respective opening commands in permclient or
+#       websocket.
 #
 # Arguments:
 #	opts_p	"Pointer" to variable that will contain relevant options/values
@@ -331,13 +335,12 @@ proc ::autoconnect::__passthrough { opts_p type mixed { warn 1 } } {
 
 # ::autoconnect::__write -- Write to server
 #
-#       Send a command (line) to a remote server. This performs wrapping of the
-#       command, if necessary, and sends using the proper API calls, depending
-#       on the protocol.
+#       Send a command (line) to a remote connection. This performs wrapping of
+#       the command, if necessary, and sends using the proper API calls,
+#       depending on the protocol.
 #
 # Arguments:
-#	id	Identifier of the connection (websocket or permclient)
-#	proto	Which protocol (ws* or tcp)
+#	cx	Identifier of the connection
 #	cmd	Line-based command to send to remote end
 #
 # Results:
@@ -345,17 +348,20 @@ proc ::autoconnect::__passthrough { opts_p type mixed { warn 1 } } {
 #
 # Side Effects:
 #       Sends command to remote end!
-proc ::autoconnect::__write { id proto cmd } {
+proc ::autoconnect::__write { cx cmd } {
     variable AC
     variable log
     
+    if { ![::uobj::isa $cx connection] } {
+	return -code error "$cx unknown or wrong type"
+    }
+    upvar \#0 $cx CONN
+    
     # Replace command by its wrapped version, if relevant
-    if { [info exists [namespace current]::wrapper_${id}] } {
-	upvar \#0 [namespace current]::wrapper_$id wrapper
-	
-	if { [llength $wrapper] } {
-	    ${log}::info "Wrapping command '$cmd' using '$wrapper'"
-	    if { [catch {eval [linsert $wrapper end $cmd]} res] } {
+    if { [info exists CONN(wrapper)] } {
+	if { [llength $CONN(wrapper)] } {
+	    ${log}::info "Wrapping command '$cmd' using '$CONN(wrapper)'"
+	    if { [catch {eval [linsert $CONN(wrapper) end $cmd]} res] } {
 		${log}::warn "Could not execute wrapper on command: $res"
 	    } else {
 		set cmd $res
@@ -365,18 +371,18 @@ proc ::autoconnect::__write { id proto cmd } {
     }
     
     # Now send the command.
-    switch -glob -- [string tolower $proto] {
+    switch -glob -- $CONN(proto) {
 	"ws*" {
-	    ::websocket::send $id text $cmd
+	    ::websocket::send $CONN(id) $CONN(framing) $cmd
 	}
 	"tcp" {
-	    ::permclient::write $id $cmd
+	    ::permclient::write $CONN(id) $cmd
 	}
     }
 }
 
 
-# ::autoconnect::__split -- URL split
+# ::autoconnect::__canonicalize -- URL extraction and (re)creation
 #
 #       Performs URL split and return the protocol, host and port that are
 #       contained in the URL. This is compatible with prior versions of the
@@ -387,14 +393,19 @@ proc ::autoconnect::__write { id proto cmd } {
 #	whomto	Specification of the remote end (usually a URL)
 #
 # Results:
-#       A triplet of the protocol, the hostname and the port.
+#       A URL for the protocols that we support, or an empty string.
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::__split { whomto } {
+proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""} } {
     variable AC
     variable log
 
+    # Access caller's variables
+    if { $proto_p ne "" } { upvar $proto_p proto }
+    if { $host_p ne "" } { upvar $host_p host }
+    if { $port_p ne "" } { upvar $port_p port }
+    
     # Try understanding the destination as a URL, regular expression below is
     # taken from the http implementation.
     set URLmatcher {(?x)		# this is _expanded_ syntax
@@ -422,15 +433,35 @@ proc ::autoconnect::__split { whomto } {
 	set proto "tcp"
 	foreach {host port} [split $whomto $AC(clientseps)] break
 	if { $host eq "" || $port eq "" } {
+	    set proto ""; set host ""; set port ""
 	    ${log}::warn "'$whomto' is an invalid destination!"
+	    return ""
 	} else {
-	    return [list $proto $host $port]
+	    set host [string tolower $host]
+	    if { ! [string is integer -strict $port] } {
+		${log}::warn "$port is not an integer!"
+		return ""
+	    }
+	    return ${proto}://${host}:${port}/
 	}
     } else {
-	return [list $proto $host $port]
+	set proto [string tolower $proto]
+	set host [string tolower $host]
+	if { [string is integer -strict $port] } {
+	    if { $proto eq "tcp" } {
+		# Always reconstruct the URL to get a consequent trailing slash
+		return ${proto}://${host}:${port}/
+	    } elseif { [string match "ws*" $proto] } {
+		return $whomto
+	    } else {
+		${log}::warn "$proto is not a recognised protocol"
+	    }
+	} else {
+	    ${log}::warn "$port is not an integer!"
+	}
     }
     
-    return [list]
+    return "";  # Default for all errors
 }
 
 
@@ -446,31 +477,22 @@ proc ::autoconnect::__split { whomto } {
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::disconnect { whomto } {
+proc ::autoconnect::disconnect { whomfrom } {
     variable AC
     variable log
     
-    foreach {proto host port} [__split $whomto] break
-    if { $proto eq "" || $host eq "" || $port eq "" } {
-	return 1
-    }
-    
-    set id ""
-    switch -glob -- [string tolower $proto] {
-	"ws*" {
-	    set id [::websocket::find $host $port]
+    set url [__canonicalize $whomfrom]
+    if { $url ne "" } {
+	set cx [::uobj::find [namespace current] connection [list url == $url]]
+	if { $cx ne "" } {
+	    upvar \#0 $cx CONN
+	    
+	    if { [info exists CONN(offtimer)] && $CONN(offtimer) ne "" } {
+		after cancel $CONN(offtimer)
+		set CONN(offtimer) ""
+	    }
+	    __disconnect $cx
 	}
-	"tcp" {
-	    set id [::permclient::find $host $port]
-	}
-    }
-    
-    if { $id ne "" } {
-	set varname [namespace current]::autooff_${id}
-	if { [info exists $varname] } {
-	    after cancel [set $varname]
-	}
-	__disconnect $id $proto
     }
 }
 
@@ -497,115 +519,151 @@ proc ::autoconnect::send { whomto cmd args } {
     variable HINTS
     variable log
 
-    foreach {proto host port} [__split $whomto] break
-    if { $proto eq "" || $host eq "" || $port eq "" } {
+    set url [__canonicalize $whomto proto host port]
+    if { $url eq "" } {
+	${log}::warn "$whomto does not refer to a valid endpoint!"
 	return 0
     }
     
+    # Extracting auto disconnection and wrappers information from options (and
+    # hints)
+    set opts [list]
+    foreach {ptn arguments} $AC(hints) {
+	if { [string match $ptn $url] } {
+	    __passthrough opts "lib" $arguments 0
+	}
+    }
+    __passthrough opts "lib" $args 0
+    set off -1
+    set wrapper [list]
+    set unwrapper [list]
+    set framing "text"
+    foreach { arg val} $opts {
+	switch -- $arg {
+	    "-autooff" { set off $val }
+	    "-wrapper" { set wrapper $val }
+	    "-unwrapper" { set unwrapper $val }
+	    "-framing" { set framing $val }
+	}
+    }
+
     # Find remote server in list of known servers and establish
     # connection if necessary.
     set asynchronous 0
     set opts [list]
     switch -glob -- [string tolower $proto] {
 	"ws*" {
-	    if { [info exists HINTS(${host}:${port})] } {
-		__passthrough opts "ws" $HINTS(${host}:${port})
+	    foreach {ptn arguments} $AC(hints) {
+		if { [string match $ptn $url] } {
+		    __passthrough opts "ws" $arguments
+		}
 	    }
 	    __passthrough opts "ws" $args
 
-	    set id [::websocket::find $host $port]
-	    if { $id eq ""} {
-		set conncmd [list ::websocket::open $whomto \
-				    [list [namespace current]::__ws_handler $host $port]]
+	    set cx [::uobj::find [namespace current] connection [list url == $url]]
+	    if { $cx eq "" } {
+		set cx [::uobj::new [namespace current] connection]
+		upvar \#0 $cx CONN
+		set CONN(self) $cx
+		set CONN(url) $url
+		set CONN(proto) $proto
+		set CONN(host) $host
+		set CONN(port) $port
+		set CONN(queue) [list]
+		set CONN(framing) $framing
+		set CONN(sock) ""
+
+		set conncmd [list ::websocket::open $url \
+				    [list [namespace current]::__ws_handler $cx]]
 		set conncmd [concat $conncmd $opts]
 
 		${log}::debug "Connecting websocket with: $conncmd"
-		set id [eval $conncmd]
-		${log}::info "Asynchronously connecting to ${host}:${port}/$proto"
+		set CONN(id) [eval $conncmd]
+		${log}::info "Asynchronously connecting to $url"
 		set asynchronous 1
-	    } elseif { [::websocket::conninfo $id state] ne "CONNECTED" } {
+	    }
+	    
+	    # Existing connection, but not yet connected
+	    upvar \#0 $cx CONN
+	    if { [::websocket::conninfo $CONN(id) state] ne "CONNECTED" } {
 		set asynchronous 1
 	    }
 	}
 	"tcp" {
-	    if { [info exists HINTS(${host}:${port})] } {
-		__passthrough opts "tcp" $HINTS(${host}:${port})
+	    foreach {ptn arguments} $AC(hints) {
+		if { [string match $ptn $url] } {
+		    __passthrough opts "tcp" $arguments
+		}
 	    }
 	    __passthrough opts "tcp" $args
 
-	    set id [::permclient::find $host $port]
-	    if { $id eq "" } {
+	    set cx [::uobj::find [namespace current] connection [list url == $url]]
+	    if { $cx eq "" } {
+		set cx [::uobj::new [namespace current] connection]
+		upvar \#0 $cx CONN
+		set CONN(self) $cx
+		set CONN(url) $url
+		set CONN(proto) $proto
+		set CONN(host) $host
+		set CONN(port) $port
+		set CONN(queue) [list]
+		set CONN(framing) $framing;   # Not relevant
+		set CONN(sock) ""
+
 		set conncmd [list ::permclient::new $host $port \
-				 [namespace current]::__incoming \
-				 -open [list [namespace current]::__connected $proto]]
+				 [list [namespace current]::__dispatch $cx]\
+				 -open [list [namespace current]::__connected $cx]]
 		set conncmd [concat $conncmd $opts]
 
 		${log}::debug "Connecting permanent client with: $conncmd"
-		set id [eval $conncmd]
-		${log}::info "Asynchronously connecting to ${host}:${port}/$proto"
+		set CONN(id) [eval $conncmd]
+		${log}::info "Asynchronously connecting to $url"
 		set asynchronous 1
 	    }
-	
+	    
 	    # Push into queue if connection to server is in progress
-	    foreach {sck hst prt} [::permclient::info $id] break
+	    upvar \#0 $cx CONN	
+	    foreach {sck hst prt} [::permclient::info $CONN(id)] break
 	    if { $sck eq "" } {
 		set asynchronous 1
 	    }
 	}
 	default {
+	    # Should not happen
 	    ${log}::warn "Unknown protocol $proto"
 	    return 0
 	}
     }
 
-    # Extracting auto disconnection and wrappers information from options (and
-    # hints)
-    set opts {}
-    if { [info exists HINTS(${host}:${port})] } {
-	__passthrough opts "lib" $HINTS(${host}:${port}) 0
-    }
-    __passthrough opts "lib" $args 0
-    set off -1
-    set wrapper [list]
-    set unwrapper [list]
-    foreach { arg val} $opts {
-	switch -- $arg {
-	    "-autooff" { set off $val }
-	    "-wrapper" { set wrapper $val }
-	    "-unwrapper" { set unwrapper $val }
-	}
-    }
-
     # Register disconnection timer whenever relevant    
+    upvar \#0 $cx CONN
     if { $off >= 0 } {
-	set varname [namespace current]::autooff_${id}
-	upvar \#0 $varname offid 
-	if { [info exists $varname] } {
+	if { [info exists CONN(offtimer)] && $CONN(offtimer) ne "" } {
 	    ${log}::debug "Postponing current auto disconnection to $off secs."
-	    after cancel $offid
+	    after cancel $CONN(offtimer)
 	} else {
 	    ${log}::debug "Installing auto disconnection in $off secs."
 	}
-	set offid [after [expr {$off * 1000}] \
-		   [namespace current]::__disconnect $id [string tolower $proto]
+	set CONN(offtimer) \
+	    [after [expr {$off*1000}] [list [namespace current]::__disconnect $cx]
+    } else {
+	set CONN(offtimer) ""
     }
 
     # Always set the wrappers to something, even though it is an empty list    
-    set [namespace current]::wrapper_${id} $wrapper
-    set [namespace current]::unwrapper_${id} $unwrapper
+    set CONN(wrapper) $wrapper
+    set CONN(unwrapper) $unwrapper
 
     # Send the command to the remote server
     if { $cmd != "" } {
 	if { $asynchronous } {
 	    ${log}::debug "Pushing command $cmd for sending upon connection"
-	    set varname "::autoconnect::__cmdqueue_${id}"
-	    upvar $varname Queue
-	    lappend Queue $cmd
+	    lappend CONN(queue) $cmd
 	    set res 1
 	} else {
-	    set res [__write $id $proto $cmd]
+	    set res [__write $cx $cmd]
 	    if { ! $res } {
-		${log}::warn "Could not send '$cmd' to ${host}:${port}"
+		${log}::warn "Could not send '$cmd' to $url"
 	    }
 	}
     } else {
@@ -618,28 +676,51 @@ proc ::autoconnect::send { whomto cmd args } {
 
 # ::autoconnect::hints -- Sending hints
 #
-#       Provide and store hints for a remote host and port to which we will be
-#       sending later on. 
+#       Provide and store hints for remote URLs to which we will be sending
+#       later on. All hints from all matching patterns will be combined and
+#       taken into account. Hint patterns are guaranteed to be unique, and order
+#       is guaranteed to be kept.
 #
 # Arguments:
-#	host	Name of remote host
-#	port	Port at remote host
+#	ptn	Glob-style pattern to match against canonical URL
 #       args	Dash-led options and arguments, passed to protocol-specific opening
 #       	commands or interal to library 
 #
 # Results:
-#       Return current hints.
+#       Return current hints for pattern passed as a parameter, if any.
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::hints { host port args } {
-    variable HINTS
+proc ::autoconnect::hints { ptn args } {
+    variable AC
+    variable log
     
-    if { [llength $args] } {
-	set HINTS(${host}:${port}) $args
+    # Reconstruct the global hints so that: if there was already exactly the
+    # same pattern, it is replaced by the new arguments. If there wasn't a
+    # pattern, add it at the end. We do this through a temporary local list in
+    # order to make sure that we keep the order of the patterns.
+    set modified 0
+    set hints {}
+    foreach {p a} $AC(hints) {
+	if { $p eq $ptn } {
+	    lappend hints $ptn $args;  # Replace current
+	    set modified 1
+	} else {
+	    lappend hints $p $a;       # Keep existing
+	}
     }
-    if { [info exists HINTS(${host}:${port})] } {
-	return $HINTS(${host}:${port})
+    if { ! $modified } {
+	lappend hints $ptn $args;      # Append if we had not changed
+    }
+    set AC(hints) $hints; # Now global list is same as local reconstructed list
+
+    # Now return the current list of hints for the pattern. We are sure to hit
+    # the pattern as the algorithm for replacement above ensures uniqueness of
+    # patterns in the hints list. 
+    foreach {p a} $AC(hints) {
+	if { $p eq $ptn } {
+	    return $a
+	}
     }
     return [list]
 }
@@ -695,6 +776,12 @@ proc ::autoconnect::get { dest cmd args } {
     variable AC
     variable log
 
+    set url [__canonicalize $dest]
+    if { $url eq "" } {
+	${log}::warn "$dest does not refer to a valid endpoint!"
+	return ""
+    }
+    
     # Generate a synchronise variable that the reception procedure
     # will use to mediate back the answer from the server.
     set id [incr AC(idgene)]
@@ -702,12 +789,7 @@ proc ::autoconnect::get { dest cmd args } {
     upvar \#0 $varname sync
     set sync ""
 
-    # Split host and port of destination and push information to the
-    # synchronisation queue.
-    set dst [split $dest $AC(clientseps)]
-    set host [lindex $dst 0]
-    set port [lindex $dst 1]
-    lappend AC(syncs) "$host" $port SET $varname
+    lappend AC(syncs) $url SET $varname
 
     # Send the command to the destination and wait for the answer or
     # for a timeout.
@@ -721,8 +803,8 @@ proc ::autoconnect::get { dest cmd args } {
 	    default { lappend sendargs $arg $val }
 	}
     }
-    after $tmout ::autoconnect::__unblock $varname "$tmout_m"
-    if { [eval [list ::autoconnect::send $dest $cmd $sendargs]] } {
+    after $tmout [namespace current]::__unblock $varname "$tmout_m"
+    if { [eval [list [namespace current]::send $dest $cmd $sendargs]] } {
 	vwait $varname
     } else {
 	set sync $tmout_m
@@ -737,7 +819,7 @@ proc ::autoconnect::get { dest cmd args } {
     }
     unset sync
     set idx [lsearch $AC(syncs) $varname]
-    set AC(syncs) [lreplace $AC(syncs) [expr $idx - 3] $idx]
+    set AC(syncs) [lreplace $AC(syncs) [expr $idx - 2] $idx]
 
     return $res
 }
