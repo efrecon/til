@@ -29,7 +29,7 @@ package require logger
 package require uobj
 package require permclient
 package require websocket
-package require base64
+package require htauth
 
 namespace eval ::autoconnect {
     # Initialise global state
@@ -651,7 +651,7 @@ proc ::autoconnect::send { whomto cmd args } {
 			    lappend nopts $k $v
 			}
 		    }
-		    set HDRS(Authorization) "Basic [::base64::encode $CONN(auth)]"
+		    array set HDRS [::htauth::headers $CONN(url)]
 		    lappend nopts -headers [array get HDRS]
 		    set conncmd [concat $conncmd $nopts]
 		} else {
