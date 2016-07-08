@@ -54,8 +54,10 @@ proc ::htauth::FQRoot { lst { tail "" } } {
     # but this is as we want it here).
     if { ![info exists URL(port)] || $URL(port) eq "" } {
 	switch -nocase -- $URL(scheme) {
-	    "http" { set URL(port) 80 }
-	    "https" { set URL(port) 443 }
+	    "http" -
+	    "ws" { set URL(port) 80 }
+	    "https" -
+	    "wss" { set URL(port) 443 }
 	    default {
 		set URL(port) ""
 	    }
@@ -94,7 +96,8 @@ proc ::htauth::Auth { URL_p } {
 
     upvar $URL_p URL
     set auth ""
-    if { [string match -nocase "http*" $URL(scheme)] } {
+    if { [string match -nocase "http*" $URL(scheme)] \
+	    || [string match -nocase "ws*" $URL(scheme)] } {
 	if { [info exists URL(user)] } {
 	    append auth $URL(user)
 	}
@@ -185,7 +188,7 @@ proc ::htauth::remember { url {usr ""} {paswd ""}} {
     variable AUTH
     variable log
 
-    array set URL [::uri::split $url]
+    Split $url URL
     set auth [Auth URL]
 
     if { $auth eq "" } {
@@ -205,6 +208,23 @@ proc ::htauth::remember { url {usr ""} {paswd ""}} {
     }
 
     return $furl
+}
+
+
+proc ::htauth::Split { url {url_p ""} } {
+    if { $url_p ne "" } {
+	upvar $url_p URL
+    }
+    
+    if { [string match ws* $url] } {
+	set surl http[string range $url 2 end]
+    } else {
+	set surl $url
+    }
+    array set URL [::uri::split $surl]
+    if { $surl ne $url } {
+	set URL(scheme) ws[string range $URL(scheme) 4 end]
+    }
 }
 
 
@@ -244,7 +264,7 @@ proc ::htauth::headers { url {hdrs_p ""} } {
 
     # Arrange for auth to be the username and password specified as
     # part of the URL.
-    array set URL [::uri::split $url]
+    Split $url URL
     set auth [Auth URL]
 
     # If we don't have an authorisation information or if we only have
