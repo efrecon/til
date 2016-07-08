@@ -29,6 +29,7 @@ package require logger
 package require uobj
 package require permclient
 package require websocket
+package require base64
 
 namespace eval ::autoconnect {
     # Initialise global state
@@ -252,7 +253,7 @@ proc ::autoconnect::receiver { dest cb ptn args } {
     if { ! $already } {
 	# Arrange to receive callbacks and open connection
 	lappend CONN(syncs) CB [list $cb $ptn]
-	eval [linsert $args 0 ::autoconnect::send $dest ""]
+	eval [linsert $args 0 [namespace current]::send $dest ""]
     }
     
     return 1
@@ -432,7 +433,7 @@ proc ::autoconnect::__write { cx cmd } {
 #
 # Side Effects:
 #       None.
-proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""} } {
+proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""} { user_p "" } } {
     variable AC
     variable log
 
@@ -440,6 +441,7 @@ proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""}
     if { $proto_p ne "" } { upvar $proto_p proto }
     if { $host_p ne "" } { upvar $host_p host }
     if { $port_p ne "" } { upvar $port_p port }
+    if { $user_p ne "" } { upvar $user_p user }
     
     # Try understanding the destination as a URL, regular expression below is
     # taken from the http implementation.
@@ -465,7 +467,7 @@ proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""}
     if { ![regexp -- $URLmatcher $whomto -> proto user host port srvurl]} {
 	# Isolate host and port number from the remote destination description,
 	# old style
-	set proto "tcp"
+	set proto "tcp"; set user ""
 	foreach {host port} [split $whomto $AC(clientseps)] break
 	if { $host eq "" || $port eq "" } {
 	    set proto ""; set host ""; set port ""
@@ -482,17 +484,25 @@ proc ::autoconnect::__canonicalize { whomto {proto_p ""} {host_p ""} {port_p ""}
     } else {
 	set proto [string tolower $proto]
 	set host [string tolower $host]
-	if { [string is integer -strict $port] } {
-	    if { $proto eq "tcp" } {
+	if { $proto eq "tcp" } {
+	    if { [string is integer -strict $port] } {
 		# Always reconstruct the URL to get a consequent trailing slash
 		return ${proto}://${host}:${port}/
-	    } elseif { [string match "ws*" $proto] } {
+	    } else {
+		${log}::warn "$port is not an integer!"
+	    }
+	} elseif { [string match "ws*" $proto] } {
+	    if { $port eq "" } {
+		if { $proto eq "ws" } { set port 80 }
+		if { $proto eq "wss" } { set port 443 }
+	    }
+	    if { [string is integer -strict $port] } {
 		return $whomto
 	    } else {
-		${log}::warn "$proto is not a recognised protocol"
+		${log}::warn "$port is not an integer!"
 	    }
 	} else {
-	    ${log}::warn "$port is not an integer!"
+	    ${log}::warn "$proto is not a recognised protocol"
 	}
     }
     
@@ -536,7 +546,7 @@ proc ::autoconnect::__context { dest } {
     variable AC
     variable log
 
-    set url [__canonicalize $dest proto host port]
+    set url [__canonicalize $dest proto host port auth]
     if { $url eq "" } {
 	${log}::warn "$dest does not refer to a valid endpoint!"
 	return ""
@@ -551,6 +561,7 @@ proc ::autoconnect::__context { dest } {
 	set CONN(proto) $proto
 	set CONN(host) $host
 	set CONN(port) $port
+	set CONN(auth) $auth
 	set CONN(queue) [list]
 	set CONN(id) ""
 	set CONN(framing) ""
@@ -630,7 +641,22 @@ proc ::autoconnect::send { whomto cmd args } {
 	    if { $CONN(id) eq "" } {
 		set conncmd [list ::websocket::open $CONN(url) \
 				    [list [namespace current]::__ws_handler $cx]]
-		set conncmd [concat $conncmd $opts]
+		if { $CONN(auth) ne "" } {
+		    array set HDRS [list]
+		    set nopts [list]
+		    foreach {k v} $opts {
+			if { [string match -he* $k] } {
+			    array set HDRS $v
+			} else {
+			    lappend nopts $k $v
+			}
+		    }
+		    set HDRS(Authorization) "Basic [::base64::encode $CONN(auth)]"
+		    lappend nopts -headers [array get HDRS]
+		    set conncmd [concat $conncmd $nopts]
+		} else {
+		    set conncmd [concat $conncmd $opts]
+		}
 		${log}::debug "Connecting websocket with: $conncmd"
 		set CONN(id) [eval $conncmd]
 		${log}::info "Asynchronously connecting to $CONN(url)"
