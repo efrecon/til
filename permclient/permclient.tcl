@@ -678,19 +678,24 @@ proc ::permclient::write { id line } {
     } else {
 	set out "$Client(host)/$Client(port) $line"
     }
-    set err [$Client(write_cmd) $Client(sock) $out]
+    
+    if { [catch {$Client(write_cmd) $Client(sock) $out} err] } {
+	${log}::notice "Cannot write to socket: $err"
+	set err 1
+    }
+    
     if { $err } {
-	fileevent $Client(sock) readable ""
+	catch {fileevent $Client(sock) readable ""}
 	catch "$Client(close_cmd) $Client(sock)"
 	set Client(sock) ""
 	${log}::notice "Server at $Client(host):$Client(port) has died,\
                         rescheduling opening of connection in\
                         $Client(-poll) seconds"
 	if { $Client(-down) != "" } {
-	    if { [catch {eval $Client(-down) $id} err] } {
+	    if { [catch {eval $Client(-down) $id} derr] } {
 		${log}::warn "Error when invoking down callback for\
                               client $id (to: \
-                              $Client(host):$Client(port)): $err"
+                              $Client(host):$Client(port)): $derr"
 	    }
 	}
 	set Client(schedule) \
