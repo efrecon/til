@@ -641,22 +641,19 @@ proc ::autoconnect::send { whomto cmd args } {
 	    if { $CONN(id) eq "" } {
 		set conncmd [list ::websocket::open $CONN(url) \
 				    [list [namespace current]::__ws_handler $cx]]
-		if { $CONN(auth) ne "" } {
-		    array set HDRS [list]
-		    set nopts [list]
-		    foreach {k v} $opts {
-			if { [string match -he* $k] } {
-			    array set HDRS $v
-			} else {
-			    lappend nopts $k $v
-			}
+		# Use the htauth module to lookup authentication
+		array set HDRS [list]
+		set nopts [list]
+		foreach {k v} $opts {
+		    if { [string match -he* $k] } {
+			array set HDRS $v
+		    } else {
+			lappend nopts $k $v
 		    }
-		    array set HDRS [::htauth::headers $CONN(url)]
-		    lappend nopts -headers [array get HDRS]
-		    set conncmd [concat $conncmd $nopts]
-		} else {
-		    set conncmd [concat $conncmd $opts]
 		}
+		array set HDRS [::htauth::headers $CONN(url)]
+		lappend nopts -headers [array get HDRS]
+		set conncmd [concat $conncmd $nopts]
 		${log}::debug "Connecting websocket with: $conncmd"
 		set CONN(id) [eval $conncmd]
 		${log}::info "Asynchronously connecting to $CONN(url)"
