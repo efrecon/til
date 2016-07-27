@@ -294,7 +294,10 @@ proc ::cmdserver::__newclient { servid sock ip port } {
     set hostname $ip
     if { [llength $Server(allow)] > 0 || [llength $Server(deny)] > 0 } {
 	if { [info commands ::dnsresolv::inverse] != "" } {
-	    set hostname [::dnsresolv::inverse $ip]
+	    if { [catch {::dnsresolv::inverse $ip} hostname] } {
+		set hostname ""
+	    }
+	    
 	    if { $hostname == "" } {
 		${log}::warn "Cannot discover host name of $ip"
 		set hostname $ip
