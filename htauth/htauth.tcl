@@ -254,14 +254,14 @@ proc ::htauth::headers { url {hdrs_p ""} } {
     # Access headers (for modification) and initialise if they don't
     # exist yet (to make sure the variable exists on procedure exit).
     if { $hdrs_p ne "" } {
-	upvar \#0 $hdrs_p hdrs
+	upvar $hdrs_p hdrs
 	if { ![info exists hdrs] } {
 	    set hdrs {}
 	}
     } else {
 	set hdrs {}
     }
-
+    
     # Arrange for auth to be the username and password specified as
     # part of the URL.
     Split $url URL
