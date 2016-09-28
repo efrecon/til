@@ -601,7 +601,25 @@ proc ::diskutil::clean_directory { d { rm_ptn {} } { keep_ptn {} } } {
 }
 
 
-proc ::diskutil::global_platform_tmp {} {
+# ::diskutil::global_platform_tmp -- Computer-wide storage location
+#
+#       This will return the location of a directory where to store files and
+#       directory on a computer-wide basis, i.e. files and directory that would
+#       be program dependent by might be accessed (and modified) by all users of
+#       the program. Directory lookup is cached for the life of the program in a
+#       global variable to this module.
+#
+# Arguments:
+#       witness A glob-style pattern to prefer a directory that would already
+#               contain something that matches. When not found, first existing
+#               working directory will be returned.
+#
+# Results:
+#       The full-path to the directory
+#
+# Side Effects:
+#       Uses the pattern to look for presence of files and check their access.
+proc ::diskutil::global_platform_tmp { {witness "*"} } {
     global tcl_platform env
     variable DiskUtil
     variable log
@@ -638,21 +656,34 @@ proc ::diskutil::global_platform_tmp {} {
 	}
 
 	# Parse the list of possible temporary directories and try to
-	# see if they really are directories that we can access.
-	# Maybe we should also do a file writable, but on windows this
-	# always returns 1 on directories (it seems to be at least).
+	# see if they really are directories that we can access and where we can
+	# find the witness pattern. Maybe we should also do a file writable, but
+	# on windows this always returns 1 on directories (it seems to be at
+	# least).
 	foreach d $dirlist {
 	    if { [file isdirectory $d] } {
-		# The glob will catch if the directory does not
-		# properly exist or cannot be access.
-		if { ! [catch {glob -nocomplain -directory $d -- *} err] } {
-		    set DiskUtil(gtmpdir) $d
-		    break
+		# The glob will catch if the directory does not properly exist
+		# or cannot be access.
+		if { [catch {glob -nocomplain -directory $d -- $witness} content] == 0 } {
+		    # We capture the first directory that contains the
+		    # "witness". In case the witness was the special case that
+		    # matches anything, we accept any directory that would just
+		    # not be empty.
+		    if { $witness eq "*" || [llength $content] > 0 } {
+			set DiskUtil(gtmpdir) $d
+			break
+		    }
 		}
 	    }
 	}
 	if { $DiskUtil(gtmpdir) == "" } {
-	    ${log}::error "Could not find a temporary directory!"
+	    if { $witness eq "*" } {
+		${log}::error "Could not find a temporary directory!"
+	    } else {
+		# Recurse once and only once more to look for first matching
+		# directory.
+		return [global_platform_tmp *]
+	    }
 	} else {
 	    ${log}::notice "Will use $DiskUtil(gtmpdir) as global \
                             temporary directory"
@@ -685,7 +716,7 @@ proc ::diskutil::global_app_directory { { prgpath "" } { prgname "" } } {
     if { $prgname eq "" } {
 	set prgname [file rootname [file tail $prgpath]]
     }
-    set dir [file join [global_platform_tmp] $prgname]
+    set dir [file join [global_platform_tmp $prgname] $prgname]
     if { [catch {file mkdir $dir} err] } {
 	${log}::error "Cannot create global storage for app at $dir: $err"
 	set dir ""
