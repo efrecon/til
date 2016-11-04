@@ -282,6 +282,22 @@ proc ::minihttpd::listening { port } {
 }
 
 
+proc ::minihttpd::servedby { sock } {
+    variable HTTPD
+    variable log
+
+    foreach port $HTTPD(servers) {
+	set varname "::minihttpd::Server_${port}"
+	upvar \#0 $varname Server
+
+	if { [lsearch $Server(clients) $sock] >= 0 } {
+	    return $port
+	}
+    }
+    return -1
+}
+
+
 # ::minihttpd::close -- Stop HTTP serving on a port
 #
 #	This command will stop an existing HTTP server on the port
@@ -307,7 +323,7 @@ proc ::minihttpd::close { port } {
 
 	catch {::close $Server(listen)}
 	foreach sock $Server(clients) {
-	    ::minihttpd::__disconnect $port $sock
+	    ::minihttpd::disconnect $port $sock
 	}
 	__log $port "Stopped web server on $port"
     } else {
@@ -316,7 +332,7 @@ proc ::minihttpd::close { port } {
 }
 
 
-# ::minihttpd::__disconnect -- Close a socket
+# ::minihttpd::disconnect -- Close a socket
 #
 #	Close a socket that had been open as a result of a client
 #	connection and cleanup all data associated to the client and
@@ -331,33 +347,20 @@ proc ::minihttpd::close { port } {
 #
 # Side Effects:
 #	Will immediately close the connection to the client, all data lost.
-proc ::minihttpd::__disconnect { port sock } {
-    variable HTTPD
-    variable log
+proc ::minihttpd::disconnect { port sock } {
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-
-	set idx [lsearch $Server(clients) $sock]
+	upvar \#0 ::minihttpd::Server_$Client(server) Server
+	fileevent $sock readable ""
+	catch {flush $sock}
+	unset Client
+	catch {::close $sock}
+	set idx [lsearch -exact $Server(clients) $sock]
 	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-
-	    fileevent $sock readable ""
-	    catch {flush $sock}
-	    unset Client
-	    catch {::close $sock}
-	    set idx [lsearch -exact $Server(clients) $sock]
-	    if { $idx >= 0 } {
-		set Server(clients) [lreplace $Server(clients) $idx $idx]
-	    }
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
+	    set Server(clients) [lreplace $Server(clients) $idx $idx]
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
     }
 }
 
@@ -461,6 +464,7 @@ proc ::minihttpd::__accept { s_port sock ipaddr port} {
 		-blocking $Server(-sockblock) \
 		-buffersize $Server(-bufsize) \
 		-translation {auto crlf}
+	    set Client(server) $s_port
 	    set Client(sock) $sock
 	    set Client(ipaddr) $ipaddr
 	    __translog $Server(port) $sock Connect $ipaddr $port
@@ -564,37 +568,27 @@ proc ::minihttpd::__tokenise_query { qry } {
 
 
 proc ::minihttpd::__starve { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
+	fconfigure $sock -translation binary
+	if { [eof $sock] } {
+	    __push $port $sock
+	}
 
-	    fconfigure $sock -translation binary
-	    if { [eof $sock] } {
-		__push $port $sock
-	    }
-
-	    if { [catch {read $sock} data] } {
-		__push $port $sock
-	    } else {
-		append Client(data) $data
-		if { [array names Client mime,content-length] != "" } {
-		    set len [string length $Client(data)]
-		    if { $len >= $Client(mime,content-length) } {
-			__push $port $sock
-		    }
-		} elseif { $data eq "" } {
-		    # There wasn't anything to read anymore
+	if { [catch {read $sock} data] } {
+	    __push $port $sock
+	} else {
+	    append Client(data) $data
+	    if { [array names Client mime,content-length] != "" } {
+		set len [string length $Client(data)]
+		if { $len >= $Client(mime,content-length) } {
 		    __push $port $sock
 		}
+	    } elseif { $data eq "" } {
+		# There wasn't anything to read anymore
+		__push $port $sock
 	    }
 	}
     }
@@ -616,99 +610,86 @@ proc ::minihttpd::__starve { port sock } {
 # Side Effects:
 #	None
 proc ::minihttpd::__pull { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-
-	    set Client(data) ""
-	    if { [catch {gets $sock line} readCount] != 0 } {
-		__translog $port $sock "Error" \
-		    "Unable to read request line: $readCount"
-		__disconnect $port $sock
-	    } else {
-		# Wait for a full line of input (as per the gets
-		# behaviour on nonblocking I/O).  Note that this might
-		# represent a security risk since sending an enormous
-		# line of junk to the server might crash it.  One
-		# solution would be to re-implement gets using read a
-		# bind it to a given length and gracefully fail on
-		# lines that are too long.
-		if { $readCount < 0 && [fblocked $sock] } {
+	set Client(data) ""
+	if { [catch {gets $sock line} readCount] != 0 } {
+	    __translog $port $sock "Error" \
+		"Unable to read request line: $readCount"
+	    disconnect $port $sock
+	} else {
+	    # Wait for a full line of input (as per the gets
+	    # behaviour on nonblocking I/O).  Note that this might
+	    # represent a security risk since sending an enormous
+	    # line of junk to the server might crash it.  One
+	    # solution would be to re-implement gets using read a
+	    # bind it to a given length and gracefully fail on
+	    # lines that are too long.
+	    if { $readCount < 0 && [fblocked $sock] } {
+		return
+	    }
+	    if {![info exists Client(state)]} {
+		if { [regexp {(POST|GET|HEAD) ([^?]+)\??([^ ]*) HTTP/(1.0|1.1)} \
+			  $line x Client(proto) Client(url) \
+			  Client(query)] } {
+		    set Client(state) mime
+		    set Client(query) [__tokenise_query $Client(query)]
+		    __translog $port $sock Query $line
+		} else {
+		    __push_error $port $sock 400 "bad first line: $line"
 		    return
 		}
-		if {![info exists Client(state)]} {
-		    if { [regexp {(POST|GET|HEAD) ([^?]+)\??([^ ]*) HTTP/(1.0|1.1)} \
-			      $line x Client(proto) Client(url) \
-			      Client(query)] } {
-			set Client(state) mime
-			set Client(query) [__tokenise_query $Client(query)]
-			__translog $port $sock Query $line
-		    } else {
-			__push_error $port $sock 400 "bad first line: $line"
-			return
+	    }
+	    
+	    set state \
+		[string compare $readCount 0],$Client(state),$Client(proto)
+	    switch -- $state {
+		0,mime,GET  -
+		0,mime,HEAD -
+		0,query,POST  { __push $port $sock }
+		0,mime,POST   {
+		    set Client(state) query
+		    set Client(data) ""
+		    fconfigure $sock -buffering none -blocking 0
+		    fileevent $sock readable \
+			[list ::minihttpd::__starve $port $sock]
+		}
+		1,mime,POST   -
+		1,mime,HEAD   -
+		1,mime,GET    {
+		    if { ![string match "$Client(proto) *" $line] \
+			    && [regexp {([^:]+):[   ]*(.*)} \
+				    $line dummy key value] } {
+			set Client(mime,[string tolower $key]) $value
 		    }
 		}
-		
-		set state \
-		    [string compare $readCount 0],$Client(state),$Client(proto)
-		switch -- $state {
-		    0,mime,GET  -
-		    0,mime,HEAD -
-		    0,query,POST  { __push $port $sock }
-		    0,mime,POST   {
-			set Client(state) query
-			set Client(data) ""
+		1,query,POST  {
+		    append Client(data) $line "\n"
+		}
+		-1,query,POST {
+		    if { $Client(data) != "" } {
+			__push $port $sock
+		    } else {
 			fconfigure $sock -buffering none -blocking 0
 			fileevent $sock readable \
 			    [list ::minihttpd::__starve $port $sock]
 		    }
-		    1,mime,POST   -
-		    1,mime,HEAD   -
-		    1,mime,GET    {
-			if [regexp {([^:]+):[   ]*(.*)} \
-				$line dummy key value] {
-			    set Client(mime,[string tolower $key]) $value
-			}
+		}
+		default {
+		    if { [eof $sock] } {
+			__translog $port $sock Error \
+			    "unexpected eof on <$Client(url)> request"
+		    } else {
+			__translog $port $sock Error \
+			    "unhandled state <$state> fetching\
+			     <$Client(url)>"
 		    }
-		    1,query,POST  {
-			append Client(data) $line "\n"
-		    }
-		    -1,query,POST {
-			if { $Client(data) != "" } {
-			    __push $port $sock
-			} else {
-			    fconfigure $sock -buffering none -blocking 0
-			    fileevent $sock readable \
-				[list ::minihttpd::__starve $port $sock]
-			}
-		    }
-		    default {
-			if { [eof $sock] } {
-			    __translog $port $sock Error \
-				"unexpected eof on <$Client(url)> request"
-			} else {
-			    __translog $port $sock Error \
-				"unhandled state <$state> fetching\
-                                 <$Client(url)>"
-			}
-			__push_error $port $sock 404 "Bad request at $state"
-		    }
+		    __push_error $port $sock 404 "Bad request at $state"
 		}
 	    }
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
     }
 }
 
@@ -820,6 +801,29 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
 }
 
 
+proc ::minihttpd::__client { port sock { logout 1 } } {
+    variable HTTPD
+    variable log
+
+    set idx [lsearch $HTTPD(servers) $port]
+    if { $idx >= 0 } {
+	set varname "::minihttpd::Server_${port}"
+	upvar \#0 $varname Server
+	
+	set idx [lsearch $Server(clients) $sock]
+	if { $idx >= 0 } {
+	    set varname "::minihttpd::Client_${port}_${sock}"
+	    return $varname
+	} elseif { $logout } {
+	    ${log}::warn "$sock is not a recognised client of $port"
+	}
+    } elseif { $logout } {
+	${log}::warn "Not listening for HTTP connections on $port!"
+    }
+    return ""    
+}
+
+
 # ::minihttpd::headers -- Return client request headers
 #
 #       Return the whole set of headers, as requested by a given
@@ -837,33 +841,27 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
 # Side Effects:
 #       None.
 proc ::minihttpd::headers { port sock } {
-    variable HTTPD
-    variable log
-
     set headers {}
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-	    foreach k [array names Client mime,*]  {
-		# Strip away the leading "mime," from the key
-		lappend headers [string range $k 5 end] $Client($k)
-	    }
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
+	foreach k [array names Client mime,*]  {
+	    # Strip away the leading "mime," from the key
+	    lappend headers [string range $k 5 end] $Client($k)
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
-    }
+    }    
     return $headers
 }
 
+
+proc ::minihttpd::steal { port sock } {
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
+	set Client(live) 1
+    }    
+}
 
 
 # ::minihttpd::__form_data -- Extract form data into query
@@ -884,37 +882,23 @@ proc ::minihttpd::headers { port sock } {
 # Side Effects:
 #       Modifies the client structure.
 proc ::minihttpd::__form_data { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-
-	    array set HDR [headers $port $sock]
-	    if { [array names HDR content-type] != "" } {
-		foreach tken [split $HDR(content-type) ";"] {
-		    set tken [string trim $tken]
-		    set dta [string trim $Client(data)]
-		    if { $tken == "application/x-www-form-urlencoded" \
-			     && $dta != "" } {
-			set Client(query) [__tokenise_query $dta]
-			    
-			return 1
-		    }
+	array set HDR [headers $port $sock]
+	if { [array names HDR content-type] != "" } {
+	    foreach tken [split $HDR(content-type) ";"] {
+		set tken [string trim $tken]
+		set dta [string trim $Client(data)]
+		if { $tken == "application/x-www-form-urlencoded" \
+			 && $dta != "" } {
+		    set Client(query) [__tokenise_query $dta]
+			
+		    return 1
 		}
 	    }
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
     }
 
     return 0
@@ -984,62 +968,34 @@ proc ::minihttpd::__authorised { port sock url } {
 # Side Effects:
 #       None.
 proc ::minihttpd::data { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-	    
-	    return $Client(data)
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
-	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
+	return $Client(data)
     }
     return ""
 }
 
 
 proc ::minihttpd::setHeaders { port sock args } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-
-	    # Transcript current list of headers into temporary array
-	    # (to guarantee we only have one key).
-	    array set HDRS {}
-	    if { [info exists Client(headers)] } {
-		array set HDRS $Client(headers)
-	    }
-	    # Set each key in the arguments, there is no check
-	    # whatsoever.
-	    foreach {k v} $args {
-		set HDRS($k) $v
-	    }
-	    # Remember for next time.
-	    set Client(headers) [array get HDRS]
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
+	# Transcript current list of headers into temporary array
+	# (to guarantee we only have one key).
+	array set HDRS {}
+	if { [info exists Client(headers)] } {
+	    array set HDRS $Client(headers)
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
+	# Set each key in the arguments, there is no check
+	# whatsoever.
+	foreach {k v} $args {
+	    set HDRS($k) $v
+	}
+	# Remember for next time.
+	set Client(headers) [array get HDRS]
     }
     return ""
 }
@@ -1104,7 +1060,7 @@ proc ::minihttpd::__ws_callback { port cb sock type msg } {
                        handler: $res"
     }
     if { $type eq "close" } {
-	__disconnect $port $sock
+	disconnect $port $sock
     }
 }
 
@@ -1125,60 +1081,56 @@ proc ::minihttpd::__ws_callback { port cb sock type msg } {
 # Side Effects:
 #	Copy content of local file to requesting socket!
 proc ::minihttpd::__push { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
+	# Stop listening for incoming data from client at this
+	# stage!
+	fileevent $sock readable ""
 
-	    # Stop listening for incoming data from client at this
-	    # stage!
-	    fileevent $sock readable ""
+	# Check authorisation of client, a non-empty string will
+	# mean to reject the request and contains the realm to use
+	# for mediating this as part of the transaction.
+	set realm [__authorised $port $sock $Client(url)]
+	if { $realm != "" } {
+	    __push_error $port $sock 401 "Authorization Required" \
+		[list WWW-Authenticate "Basic realm=\"$realm\""]
+	    return; # Return ASAP since rejected!
+	}
 
-	    # Check authorisation of client, a non-empty string will
-	    # mean to reject the request and contains the realm to use
-	    # for mediating this as part of the transaction.
-	    set realm [__authorised $port $sock $Client(url)]
-	    if { $realm != "" } {
-		__push_error $port $sock 401 "Authorization Required" \
-		    [list WWW-Authenticate "Basic realm=\"$realm\""]
-		return; # Return ASAP since rejected!
-	    }
+	# Convert application/x-www-formencoded into what the
+	# following expects from Client(query).
+	__form_data $port $sock
 
-	    # Convert application/x-www-formencoded into what the
-	    # following expects from Client(query).
-	    __form_data $port $sock
+	set Client(response) ""
+	set Client(handler) ""
+	set Client(responseType) "text/html"
+	set Client(headers) {}
+	set Client(live) 0
 
-	    set Client(response) ""
-	    set Client(handler) ""
-	    set Client(responseType) "text/html"
-	    set Client(headers) {}
-
-	    foreach { ptn cb fmt } $Server(handlers) {
-		if { [string match -nocase $ptn $Client(url)] } {
-		    if { [catch {eval [linsert $cb end $port $sock $Client(url) $Client(query)]} res] } {
-			__push_error $port $sock 400 \
-			    "Error when executing internal handler: $res"
-			return
-		    } else {
-			set Client(handler) $ptn
-			set Client(response) $res
-			set Client(responseType) $fmt
-		    }
-		    break
+	upvar \#0 ::minihttpd::Server_$Client(server) Server
+	foreach { ptn cb fmt } $Server(handlers) {
+	    if { [string match -nocase $ptn $Client(url)] } {
+		if { [catch {eval [linsert $cb end $port $sock $Client(url) $Client(query)]} res] } {
+		    __push_error $port $sock 400 \
+			"Error when executing internal handler: $res"
+		    return
+		} else {
+		    set Client(handler) $ptn
+		    set Client(response) $res
+		    set Client(responseType) $fmt
 		}
+		break
 	    }
+	}
 
+	set c [__client $port $sock 0];  # Search again, handlers might disconnect
+	if { $c ne "" } {
 	    # Convert the socket to a web socket if appropriate.
-	    set Client(live) 0
-	    if { $Server(live) ne "" } {
+	    set websocket 0
+	    if { $Server(live) ne "" && !$Client(live) } {
+		set websocket 1
 		set Client(live) [::websocket::test $Server(listen) $sock \
 				      $Client(url) [headers $port $sock] \
 				      $Client(query)]
@@ -1208,7 +1160,9 @@ proc ::minihttpd::__push { port sock } {
 	    }
 
 	    if { $Client(live)  } {
-		::websocket::upgrade $sock
+		if { $websocket } {
+		    ::websocket::upgrade $sock
+		}
 	    } elseif { $Client(response) != "" || $Client(handler) != "" } {
 		puts $sock "HTTP/1.0 200 Data follows"
 		puts $sock "Date: [__fmtdate [clock seconds]]"
@@ -1259,11 +1213,7 @@ proc ::minihttpd::__push { port sock } {
 		    __push_error $port $sock 404 "$Client(url) $in"
 		}
 	    }
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
     }
 }
 
@@ -1283,29 +1233,20 @@ proc ::minihttpd::__push { port sock } {
 # Side Effects:
 #       Copy client response in small chunks to the client.
 proc ::minihttpd::__flush { port sock } {
-    variable HTTPD
-    variable log
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
-
-	    set len [string length $Client(response)]
-	    if { $Client(outbytes) < $len } {
-		puts -nonewline $sock \
-		    [string range $Client(response) \
-			 $Client(outbytes) \
-			 [expr {$Client(outbytes)+$Server(-bufsize)-1}]]
-		incr Client(outbytes) $Server(-bufsize)
-	    } else {
-		__finish $port $Client(url) "" $sock $len
-	    }
+	set len [string length $Client(response)]
+	if { $Client(outbytes) < $len } {
+	    upvar \#0 ::minihttpd::Server_$Client(server) Server
+	    puts -nonewline $sock \
+		[string range $Client(response) \
+		     $Client(outbytes) \
+		     [expr {$Client(outbytes)+$Server(-bufsize)-1}]]
+	    incr Client(outbytes) $Server(-bufsize)
+	} else {
+	    __finish $port $Client(url) "" $sock $len
 	}
     }
 }
@@ -1348,7 +1289,7 @@ proc ::minihttpd::__finish { port mypath in out bytes { error {} } } {
     }
     
     # Close connection to client.
-    __disconnect $port $out
+    disconnect $port $out
 }
 
 
@@ -1633,40 +1574,27 @@ proc ::minihttpd::__log { port txt } {
 # Side Effects:
 #	None.
 proc ::minihttpd::__push_error { port sock code { errmsg "" } { hdrs "" } } {
-    variable HTTPD
-    variable log
     variable HTTPD_errors
 
-    set idx [lsearch $HTTPD(servers) $port]
-    if { $idx >= 0 } {
-	set varname "::minihttpd::Server_${port}"
-	upvar \#0 $varname Server
-	
-	set idx [lsearch $Server(clients) $sock]
-	if { $idx >= 0 } {
-	    set varname "::minihttpd::Client_${port}_${sock}"
-	    upvar \#0 $varname Client
+    set c [__client $port $sock]
+    if { $c ne "" } {
+	upvar \#0 $c Client
 
-	    if { $errmsg == "" } {
-		set errmsg $HTTPD_errors($code)
-	    }
-	    append Client(url) ""
-	    set message "<title>Error: $code</title>Error <b>$Client(url): $errmsg</b>."
-	    puts $sock "HTTP/1.0 $code $errmsg"
-	    puts $sock "Date: [__fmtdate [clock seconds]]"
-	    puts $sock "Content-Length: [string length $message]"
-	    foreach { hdr val } $hdrs {
-		puts $sock "$hdr: $val"
-	    }
-	    puts $sock ""
-	    puts $sock $message
-	    __translog $port $sock Error $message
-	    __disconnect $port $sock;  # Will flush the sock
-	} else {
-	    ${log}::warn "$sock is not a recognised client of $port"
+	if { $errmsg == "" } {
+	    set errmsg $HTTPD_errors($code)
 	}
-    } else {
-	${log}::warn "Not listening for HTTP connections on $port!"
+	append Client(url) ""
+	set message "<title>Error: $code</title>Error <b>$Client(url): $errmsg</b>."
+	puts $sock "HTTP/1.0 $code $errmsg"
+	puts $sock "Date: [__fmtdate [clock seconds]]"
+	puts $sock "Content-Length: [string length $message]"
+	foreach { hdr val } $hdrs {
+	    puts $sock "$hdr: $val"
+	}
+	puts $sock ""
+	puts $sock $message
+	__translog $port $sock Error $message
+	disconnect $port $sock;  # Will flush the sock
     }
 }
 
