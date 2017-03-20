@@ -787,6 +787,9 @@ proc ::autoconnect::conninfo { whomto what } {
 		    return $CONN(proto)
 		}
 		"state" {
+		    if { ![info exists CONN(id)] || $CONN(id) eq "" } {
+			return CLOSED
+		    }
 		    switch -glob -- $CONN(proto) {
 			"ws*" {
 			    return [::websocket::conninfo $CONN(id) state]
