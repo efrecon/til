@@ -741,19 +741,25 @@ if { [llength [info commands tailcall]] } {
     proc ::uobj::__rdispatch { obj ns methods method args } {
 	set ns [string trimright ${ns} :]
 	foreach meths $methods {
-	    foreach m $meths {
-		if { [string equal $m $method] } {
-		    # Look for all possible candidates since we want to be able
-		    # to support aliases.
-		    foreach candidate $meths {
-			if { [info commands ${ns}::$candidate] ne "" } {
-			    # If we've found the implementation of the command
-			    # execute it
-			    tailcall __dispatch $obj $ns $candidate {*}$args
-			}
+	    if { [lsearch $meths $method] >=0 } {
+		# Look for all possible candidates since we want to be able
+		# to support aliases.
+		foreach candidate $meths {
+		    # Support aliasing into another command. If meths contained
+		    # {{call sensor} sensor} the code that follows arranges to
+		    # recognise a command called sensor, which leads to calling
+		    # call sensor followed by the arguments passed to the
+		    # dispatcher.
+		    set remaining [lassign $candidate cmd]; # lassign returns what wasn't assigned!
+		    if { [info commands ${ns}::$cmd] ne "" } {
+			# If we've found the implementation of the command
+			# execute it, don't forget to pass additional internal
+			# (implementation) options before the args from the
+			# caller.
+			tailcall __dispatch $obj $ns $cmd {*}$remaining {*}$args
 		    }
-		    return -code error "Cannot find any implementation for $method in $ns!"
 		}
+		return -code error "Cannot find any implementation for $method in $ns!"
 	    }
 	}
 	return -code error "$method is not allowed in $obj!"
@@ -770,20 +776,23 @@ if { [llength [info commands tailcall]] } {
     proc ::uobj::__rdispatch { obj ns methods method args } {
 	set ns [string trimright ${ns} :]
 	foreach meths $methods {
-	    foreach m $meths {
-		if { [string equal $m $method] } {
-		    # Look for all possible candidates since we want to be able
-		    # to support aliases.
-		    foreach candidate $meths {
-			if { [info commands ${ns}::$candidate] ne "" } {
-			    # If we've found the implementation of the command
-			    # execute it
-			    return [uplevel 1 \
-				      [linsert $args 0 [namespace current]::__dispatch $obj $ns $candidate]]
+	    if { [lsearch $meths $method] >=0 } {
+		# Look for all possible candidates since we want to be able
+		# to support aliases.
+		foreach candidate $meths {
+		    set cmd [lindex $candidate 0]
+		    if { [info commands ${ns}::$cmd] ne "" } {
+			set remaining [lrange $candidate 1 end]
+			set call [linsert $remaining 0 [namespace current]::__dispatch $obj $ns $cmd]
+			foreach a $args {
+			    lappend call $a
 			}
+			# If we've found the implementation of the command
+			# execute it
+			return [uplevel 1 $call]
 		    }
-		    return -code error "Cannot find any implementation for $method in $ns!"
 		}
+		return -code error "Cannot find any implementation for $method in $ns!"
 	    }
 	}
 	return -code error "$method is not allowed in $obj!"
