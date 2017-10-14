@@ -160,7 +160,7 @@ proc ::minihttpd::dirlist::dirlist { port sock dir srvdir } {
 		[clock format [file mtime [file join $dir ".."]] \
 		     -format "%d-%b-%Y %H:%M"] "-   " $maxsize
 	}
-	foreach fname $flist {
+	foreach fname [lsort $flist] {
 	    if { [file isdirectory $fname] } {
 		set sz "-   "
 	    } else {
