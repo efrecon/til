@@ -168,25 +168,27 @@ proc ::diskutil::double_backslash { fname_in } {
 proc ::diskutil::absolute_path { relpath } {
     variable log
 
-    set abspath ""
-    set olddir [pwd]
+	if { [catch {file normalize $relpath} abspath] } {
+		set abspath ""
+		set olddir [pwd]
 
-    if { [file isdirectory $relpath] } {
-	if { [catch "cd $relpath"] != 0 } {
-	    ${log}::error "Cannot change to directory $relpath"
-	    return ""
+		if { [file isdirectory $relpath] } {
+			if { [catch "cd $relpath"] != 0 } {
+				${log}::error "Cannot change to directory $relpath"
+				return ""
+			}
+			set abspath [pwd]
+		} else {
+			set dirname [file dirname $relpath]
+			set filename [file tail $relpath]
+			if { [catch {cd "$dirname"} err] } {
+				${log}::error "Cannot change to directory $dirname: $err"
+				return ""
+			}
+			set abspath [file join [pwd] $filename]
+		}
+		cd $olddir
 	}
-	set abspath [pwd]
-    } else {
-	set dirname [file dirname $relpath]
-	set filename [file tail $relpath]
-	if { [catch {cd "$dirname"} err] } {
-	    ${log}::error "Cannot change to directory $dirname: $err"
-	    return ""
-	}
-	set abspath [file join [pwd] $filename]
-    }
-    cd $olddir
 
     ${log}::debug "$relpath resolved to $abspath"
     return $abspath
@@ -380,7 +382,7 @@ proc ::diskutil::platform_tmp { } {
 	    }
 	    # This is on NT, 98, etc. Problem is that "Local Settings"
 	    # actually sometimes is in the local language of the OS,
-	    # e.g. "Lokala Inställningar" in Swedish.
+	    # e.g. "Lokala Instï¿½llningar" in Swedish.
 	    if { [array names env "USERPROFILE"] == "USERPROFILE" } {
 		lappend dirlist \
 		    [file join $env(USERPROFILE) "Local Settings" "Temp"]
