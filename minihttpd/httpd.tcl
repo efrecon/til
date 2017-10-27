@@ -752,8 +752,8 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
             # getting its directory.
             set r_root [file dirname \
                             [::diskutil::absolute_path \
-                                [file join $Server(root) "._NoTT__aF*Ile"]]]
-            if { [string first $r_$root $mypath] != 0 } {
+                                [file join $Server(root) "._NoT__aF*Ile"]]]
+            if { [string first $r_root $mypath] != 0 } {
                 # Outside of root directory is an ERROR!
                 set mypath ""
             } else {
