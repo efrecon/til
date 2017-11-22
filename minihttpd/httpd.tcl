@@ -754,15 +754,13 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
             set r_root [file dirname \
                             [::diskutil::absolute_path \
                                 [file join $Server(root) "._NoT__aF*Ile"]]]
-            if { [string is false $Server(-escaperoot)] || [string first $r_root $mypath] != 0 } {
-                # Outside of root directory is an ERROR!
-                set mypath ""
-            } else {
+            if { [string is true $Server(-escaperoot)] || [string first $r_root $mypath] == 0 } {
                 if {[file isdirectory $mypath]} {
                     set defaulted 0
                     foreach d $Server(-default) {
                         set fname [file join $mypath $d]
                         if { [file exists $fname] && [file readable $fname] } {
+                            ${log}::info "Returning $fname for content of $mypath"
                             set mypath $fname
                             set defaulted 1
                             break
@@ -777,10 +775,15 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
                         }
                         if { ! $match } {
                             # Generate an error, directory not allowed
+                            ${log}::warn "Directory at $mypath not allowed for dir. listing"
                             set mypath ""
                         }
                     }
                 }
+            } else {
+                # Outside of root directory is an ERROR!
+                ${log}::warn ""
+                set mypath "$mypath is outside of root, try with -escaperoot if you have not yet"
             }
         }
         
