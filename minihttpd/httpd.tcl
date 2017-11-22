@@ -51,6 +51,7 @@ namespace eval ::minihttpd {
             -ranges          {0.0.0.0/0 ::/0}
             -ciphers         {tls1 tls1.1 tls1.2}
             -resolver        300
+            -escaperoot      off
         }
         variable log [::logger::init [string trimleft [namespace current] ::]]
         ${log}::setlevel $HTTPD(loglevel)
@@ -753,7 +754,7 @@ proc ::minihttpd::fullurl { port { fpath "/" } { fullpath_p "" } } {
             set r_root [file dirname \
                             [::diskutil::absolute_path \
                                 [file join $Server(root) "._NoT__aF*Ile"]]]
-            if { [string first $r_root $mypath] != 0 } {
+            if { [string is true $Server(-escaperoot)] || [string first $r_root $mypath] != 0 } {
                 # Outside of root directory is an ERROR!
                 set mypath ""
             } else {

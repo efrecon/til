@@ -54,6 +54,7 @@ set options {
     { ciphers.arg "" "List of ciphers (e.g. tls1, ssl3, etc.) to support, empty for good default" }
     { hostname.arg "" "Which hostname the server is responding to (empty for good guess)" }
     { ranges.arg {0.0.0.0/0 ::/0} "List of IP ranges of client addresses allowed, in CIDR notation; or @ followed by path to file" }
+    { escape "" "Allow to escape from the served root (using symlinks)?"}
 }
 
 set inited [::argutil::initargs HTTPD $options]
@@ -62,6 +63,7 @@ if { [catch {cmdline::typedGetoptions argv $options} optlist] != 0 } {
     exit
 }
 array set HTTPD $optlist
+argutil::boolean HTTPD escape
 foreach key $inited {
     ::argutil::makelist HTTPD($key)
 }
@@ -90,7 +92,7 @@ set cmd [list ::minihttpd::new $rootdir $HTTPD(port) \
 			-logfile $logfile \
 			-dirlist $HTTPD(allow) \
 			-ranges $HTTPD(ranges)]
-foreach {opt copt} [list authorization authorization pki pki ciphers ciphers hostname externhost] {
+foreach {opt copt} [list authorization authorization pki pki ciphers ciphers hostname externhost escape escaperoot] {
     if { $HTTPD($opt) ne "" } {
 	lappend cmd -[string trimleft $copt -] $HTTPD($opt)
     }
