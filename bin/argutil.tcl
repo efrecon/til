@@ -23,39 +23,39 @@ package provide argutil 1.5
 namespace eval ::argutil {
     variable AU
     if { ! [info exists AU] } {
-	array set AU {
-	    levels      {debug info notice warn error critical}
-	    loglevel    warn
-	    dft_outfd   stdout
-	    dateformat  "%d%m%y %H:%M:%S"
-	    extlog      ""
-	    outfailed   0
-	    vbs         "lnk2path.vbs"
-	    wsh         ""
-	    links_cache {}
-	    -maxlinks   10
-	    -autounwrap off
-	    -tmpmake    32767
-	    -tmppfx     "tcltmp_"
-	    -packed     {.tm .zip .kit}
-	    -rootdirs   {%scriptdir% %progdir% %libdir%}
-	    -searchdirs {../../../lib ../../lib ../lib lib ../../.. ../.. .. .}
-	}
-	variable libdir [file dirname [file normalize [info script]]]
+        array set AU {
+            levels      {debug info notice warn error critical}
+            loglevel    warn
+            dft_outfd   stdout
+            dateformat  "%d%m%y %H:%M:%S"
+            extlog      ""
+            outfailed   0
+            vbs         "lnk2path.vbs"
+            wsh         ""
+            links_cache {}
+            -maxlinks   10
+            -autounwrap off
+            -tmpmake    32767
+            -tmppfx     "tcltmp_"
+            -packed     {.tm .zip .kit}
+            -rootdirs   {%scriptdir% %progdir% %libdir%}
+            -searchdirs {../../../lib ../../lib ../lib lib ../../.. ../.. .. .}
+        }
+        variable libdir [file dirname [file normalize [info script]]]
     }
-
+    
     namespace export platform accesslib boolean makelist loadmodules \
-	initargs fix_outlog unwrap configure
+            initargs fix_outlog unwrap configure
 }
 
 
 proc ::argutil::configure { args } {
     variable AU
-
+    
     foreach {k v} $args {
-	if { [lsearch [array names AU -*] $k] >= 0 } {
-	    set AU($k) $v
-	}
+        if { [lsearch [array names AU -*] $k] >= 0 } {
+            set AU($k) $v
+        }
     }
 }
 
@@ -79,66 +79,80 @@ proc ::argutil::configure { args } {
 proc ::argutil::readlnk { lnk } {
     variable libdir
     variable AU
-
+    
     # Find link in cache, if possible
     foreach {l tgt} $AU(links_cache) {
-	if { $l == $lnk } {
-	    return $tgt
-	}
+        if { $l == $lnk } {
+            return $tgt
+        }
     }
-
+    
     if { ![file exists $lnk] } {
-	__log warn "'$lnk' is not an accessible file"
-	return -code error "'$lnk' is not an accessible file"
-    } 
-
+        __log warn "'$lnk' is not an accessible file"
+        return -code error "'$lnk' is not an accessible file"
+    }
+    
     set tgt ""
-    if { [catch {package require tcom} err] == 0 } {
-	__log debug "'tcom' available trying failsafe method first"
-	if { $AU(wsh) eq "" } {
-	    set AU(wsh) [::tcom::ref createobject "WScript.Shell"]
-	}
-	set lobj [$AU(wsh) CreateShortcut [file nativename $lnk]]
-	set tgt [$lobj TargetPath]
-	__log info "'$lnk' points to '$tgt'"
-	if { $tgt ne "" } {
-	    lappend AU(links_cache) $lnk $tgt
-	    return $tgt
-	}
+    if { [catch {package require twapi} err] == 0 } {
+        __log debug "'twapi' available, trying most modern method first"
+        array set shortcut [::twapi::read_shortcut $lnk]
+        if { [info exists shortcut(-path)] } {
+            __log info "'$lnk' points to '$shortcut(-path)'"
+            if { $shortcut(-path) ne "" } {
+                lappend AU(links_cache) $lnk $shortcut(-path)
+                return $shortcut(-path)
+            }
+        }
     } else {
-	__log debug "Could not find 'tcom' package: $err"
+        __log debug "Could not find 'twapi' package: $err"
     }
 
-    __log debug "'tcom' not available or failed, using link VBS"
+    if { [catch {package require tcom} err] == 0 } {
+        __log debug "'tcom' available trying failsafe method first"
+        if { $AU(wsh) eq "" } {
+            set AU(wsh) [::tcom::ref createobject "WScript.Shell"]
+        }
+        set lobj [$AU(wsh) CreateShortcut [file nativename $lnk]]
+        set tgt [$lobj TargetPath]
+        __log info "'$lnk' points to '$tgt'"
+        if { $tgt ne "" } {
+            lappend AU(links_cache) $lnk $tgt
+            return $tgt
+        }
+    } else {
+        __log debug "Could not find 'tcom' package: $err"
+    }
+    
+    __log debug "Nor 'twapi', nor 'tcom' available or they failed, using link VBS"
     set vbs [file join $libdir $AU(vbs)]
     if { [file exists $vbs] } {
-	# Run the VBS script and gather result.
-	set cmd "|cscript //nologo \"$vbs\" \"$lnk\""
-	set fl [open $cmd]
-	set tgt [read $fl]
-	if { [catch {close $fl} err] } {
-	    __log error "Could not read content of link: $lnk"
-	} else {
-	    lappend AU(links_cache) $lnk $tgt
-	    set tgt [string trim $tgt]
-	}
+        # Run the VBS script and gather result.
+        set cmd "|cscript //nologo \"$vbs\" \"$lnk\""
+        set fl [open $cmd]
+        set tgt [read $fl]
+        if { [catch {close $fl} err] } {
+            __log error "Could not read content of link: $lnk"
+        } else {
+            lappend AU(links_cache) $lnk $tgt
+            set tgt [string trim $tgt]
+        }
     }
-
+    
     if { $tgt eq "" } {
-	set fp [open $lnk]
-	fconfigure $fp -encoding binary -translation binary -eofchar {}
-	foreach snip [split [read $fp] \x00] {
-	    set abssnip [file join [file dirname $lnk] $snip]
-	    if { $snip ne "" && [file exists $abssnip]} {
-		__log info "'$abssnip' found in '$lnk', using it as the link!"
-		set tgt $snip
-		lappend AU(links_cache) $lnk $tgt
-		break
-	    }
-	}
-	close $fp
+        set fp [open $lnk]
+        fconfigure $fp -encoding binary -translation binary -eofchar {}
+        foreach snip [split [read $fp] \x00] {
+            set abssnip [file join [file dirname $lnk] $snip]
+            if { $snip ne "" && [file exists $abssnip]} {
+                __log info "'$abssnip' found in '$lnk', using it as the link!"
+                set tgt $snip
+                lappend AU(links_cache) $lnk $tgt
+                break
+            }
+        }
+        close $fp
     }
-
+    
     return $tgt
 }
 
@@ -167,17 +181,17 @@ proc ::argutil::readlnk { lnk } {
 #	None.
 proc ::argutil::logcb { cmd } {
     variable AU
-
+    
     lappend AU(extlog) $cmd
 }
 
 
 proc ::argutil::logrm { cmd } {
     variable AU
-
+    
     set idx [lsearch $AU(extlog) $cmd]
     if { $idx >= 0 } {
-	set AU(extlog) [lreplace $AU(extlog) $idx $idx]
+        set AU(extlog) [lreplace $AU(extlog) $idx $idx]
     }
 }
 
@@ -205,71 +219,71 @@ proc ::argutil::logrm { cmd } {
 #	Dump to the file descriptor
 proc ::argutil::__out { service level str { dt "" } { fd_nm "" } } {
     variable AU
-
+    
     # Store current date in right format
     if { $dt eq "" } {
-	set dt [clock seconds]
+        set dt [clock seconds]
     }
     set logdt [clock format $dt -format $AU(dateformat)]
-
+    
     # Deliver log callbacks if there are some.  Arrange for "out" to
     # carry whether we should continue with logging to the file or
     # console or whether we should stop once all callbacks have been
     # delivered.
     set out 1
     foreach cmd $AU(extlog) {
-	if { [catch {eval $cmd \$logdt $service $level \$str} output] } {
-	    if { ! $AU(outfailed) } {
-		set AU(outfailed) 1
-		__out argutil warn \
-		    "Could not execute log callback $cmd: $output"
-	    }
-	} else {
-	    if { ! $output } {
-		set out 0
-	    }
-	}
+        if { [catch {eval $cmd \$logdt $service $level \$str} output] } {
+            if { ! $AU(outfailed) } {
+                set AU(outfailed) 1
+                __out argutil warn \
+                        "Could not execute log callback $cmd: $output"
+            }
+        } else {
+            if { ! $output } {
+                set out 0
+            }
+        }
     }
-
+    
     # Don't bother continuing if one of the callbacks has told us not
     # to output anything.
     if { ! $out } {
-	return
+        return
     }
-
+    
     # Now guess if fd_nm is a file descriptor or the name of a
     # file. If it is a file name, try to open it.
     if { $fd_nm eq "" } {
-	set fd_nm $AU(dft_outfd)
-    } 
-    if { [catch {fconfigure $fd_nm}] } {
-	# fconfigure will scream if the variable is not a file
-	# descriptor, in that case, it is a file name!
-	if { [catch {open $fd_nm a+} fd] } {
-	    if { ! $AU(outfailed) } {
-		set AU(outfailed) 1
-		__out argutil warn "Cannot open $fd_nm for writing: $fd"
-	    }
-	    set fd ""
-	}
-    } else {
-	set fd $fd_nm
+        set fd_nm $AU(dft_outfd)
     }
-
+    if { [catch {fconfigure $fd_nm}] } {
+        # fconfigure will scream if the variable is not a file
+        # descriptor, in that case, it is a file name!
+        if { [catch {open $fd_nm a+} fd] } {
+            if { ! $AU(outfailed) } {
+                set AU(outfailed) 1
+                __out argutil warn "Cannot open $fd_nm for writing: $fd"
+            }
+            set fd ""
+        }
+    } else {
+        set fd $fd_nm
+    }
+    
     # Now that we are here, fd contains where to output the string.
     # It can be empty if we could not open the file when the input was
     # a file name.
     if { $fd ne "" } {
-	if { [catch {puts $fd "\[$logdt\] \[$service\] \[$level\] '$str'"}] } {
-	    if { ! $AU(outfailed) } {
-		set AU(outfailed) 1
-		__out argutil warn "Cannot write to log file descriptor $fd!"
-	    }
-	}
-	if { $fd ne $fd_nm } {
-	    # Close the output file if the parameter was a name.
-	    close $fd
-	}
+        if { [catch {puts $fd "\[$logdt\] \[$service\] \[$level\] '$str'"}] } {
+            if { ! $AU(outfailed) } {
+                set AU(outfailed) 1
+                __out argutil warn "Cannot write to log file descriptor $fd!"
+            }
+        }
+        if { $fd ne $fd_nm } {
+            # Close the output file if the parameter was a name.
+            close $fd
+        }
     }
 }
 
@@ -314,23 +328,23 @@ if {[package vcompare [package provide Tcl] 8.4] < 0} {
 #	Will possibly create a new logger service.
 proc ::argutil::__log { lvl str } {
     variable AU
-
+    
     if { [__nsExists ::logger] } {
-	variable log
-	
-	if { ! [info exists log] } {
-	    set log [::logger::init argutil]
-	    ${log}::setlevel $AU(loglevel)
-	    fix_outlog argutil
-	    ${log}::debug "Auto installed logging feature for argutil"
-	}
-	${log}::${lvl} $str
+        variable log
+        
+        if { ! [info exists log] } {
+            set log [::logger::init argutil]
+            ${log}::setlevel $AU(loglevel)
+            fix_outlog argutil
+            ${log}::debug "Auto installed logging feature for argutil"
+        }
+        ${log}::${lvl} $str
     } else {
-	set au_lvl [lsearch $AU(levels) $AU(loglevel)]
-	set cur_lvl [lsearch $AU(levels) $lvl]
-	if { $cur_lvl >= $au_lvl } {
-	    __out argutil $lvl $str
-	}
+        set au_lvl [lsearch $AU(levels) $AU(loglevel)]
+        set cur_lvl [lsearch $AU(levels) $lvl]
+        if { $cur_lvl >= $au_lvl } {
+            __out argutil $lvl $str
+        }
     }
 }
 
@@ -350,19 +364,19 @@ proc ::argutil::__log { lvl str } {
 proc ::argutil::loglevel { { loglvl "" } } {
     variable AU
     variable log
-
+    
     if { $loglvl != "" } {
-	if { [info exists log] } {
-	    if { [catch "${log}::setlevel $loglvl"] == 0 } {
-		set AU(loglevel) $loglvl
-	    }
-	} else {
-	    if { [lsearch $AU(levels) $loglvl] >= 0 } {
-		set AU(loglevel) $loglvl
-	    }
-	}
+        if { [info exists log] } {
+            if { [catch "${log}::setlevel $loglvl"] == 0 } {
+                set AU(loglevel) $loglvl
+            }
+        } else {
+            if { [lsearch $AU(levels) $loglvl] >= 0 } {
+                set AU(loglevel) $loglvl
+            }
+        }
     }
-
+    
     return $AU(loglevel)
 }
 
@@ -384,30 +398,30 @@ proc ::argutil::loglevel { { loglvl "" } } {
 proc ::argutil::resolve_links { path } {
     variable AU
     global tcl_platform
-
+    
     if { $tcl_platform(platform) eq "windows" } {
-	# Loops a finite number of time to resolve links to links.
-	for { set i 0 } { $i < $AU(-maxlinks) } { incr i } {
-	    set rp ""
-	    set sp [file split $path]
-	    foreach d $sp {
-		set jp [file join $rp $d]
-		if { [string toupper [file extension $jp]] eq ".LNK" } {
-		    set rp [file join $rp [readlnk $jp]]
-		} elseif { [file exists ${jp}.lnk] } {
-		    set rp [file join $rp [readlnk ${jp}.lnk]]
-		} else {
-		    set rp $jp
-		}
-	    }
-	    if { $rp eq $path } {
-		break
-	    }
-	    set path $rp
-	}
-	return $rp
+        # Loops a finite number of time to resolve links to links.
+        for { set i 0 } { $i < $AU(-maxlinks) } { incr i } {
+            set rp ""
+            set sp [file split $path]
+            foreach d $sp {
+                set jp [file join $rp $d]
+                if { [string toupper [file extension $jp]] eq ".LNK" } {
+                    set rp [file join $rp [readlnk $jp]]
+                } elseif { [file exists ${jp}.lnk] } {
+                    set rp [file join $rp [readlnk ${jp}.lnk]]
+                } else {
+                    set rp $jp
+                }
+            }
+            if { $rp eq $path } {
+                break
+            }
+            set path $rp
+        }
+        return $rp
     } else {
-	return $path
+        return $path
     }
 }
 
@@ -428,10 +442,10 @@ proc ::argutil::resolve_links { path } {
 #	Will modify the content of the variable passed as an argument.
 proc ::argutil::resolve_path { path_p } {
     upvar $path_p path
-
+    
     set res ""
     foreach p $path {
-	lappend res [resolve_links $p]
+        lappend res [resolve_links $p]
     }
     set path $res
 }
@@ -456,18 +470,18 @@ proc ::argutil::resolve_path { path_p } {
 #	None.
 proc ::argutil::platform {} {
     global tcl_platform
-
+    
     set plat [lindex $tcl_platform(os) 0]
     set mach $tcl_platform(machine)
     switch -glob -- $mach {
-	sun4* { set mach sparc }
-	intel -
-	i*86* { set mach x86 }
-	"Power Macintosh" { set mach ppc }
+        sun4* { set mach sparc }
+        intel -
+        i*86* { set mach x86 }
+        "Power Macintosh" { set mach ppc }
     }
     switch -- $plat {
-	AIX   { set mach ppc }
-	HP-UX { set mach hppa }
+        AIX   { set mach ppc }
+        HP-UX { set mach hppa }
     }
     return "$plat-$mach"
 }
@@ -501,16 +515,16 @@ proc ::argutil::__copytmp { libdir } {
     # starkit onto the local disk.  One solution to remedy to this
     # problem would be to obfuscate gently/encrypt the code to make it
     # less readable and less obvious that this is program code.
-
+    
     set ourbin [file tail $::starkit::topdir]
-
+    
     # Make a unique number that identifies this binary (via its raw
     # name (without considering the directory) and its "compilation"
     # time).
     set unique 0
     for { set i 0 } { $i < [string length $ourbin] } { incr i } {
-	set c [scan [string index $ourbin $i] %c]
-	set unique [expr ($unique + $c) % $AU(-tmpmake)]
+        set c [scan [string index $ourbin $i] %c]
+        set unique [expr ($unique + $c) % $AU(-tmpmake)]
     }
     set m [file mtime [file join $::starkit::topdir main.tcl]]
     set unique [expr ($unique + $m) % $AU(-tmpmake)]
@@ -523,21 +537,21 @@ proc ::argutil::__copytmp { libdir } {
     file mkdir $tmpdir
     set tmpdir [file join $tmpdir [file tail $libdir]]
     if { ! [file exists $tmpdir] } {
-	__log notice "Copying source from $libdir to $tmpdir\
-                      so as to be able to access binaries"
-	file copy -force $libdir [file dirname $tmpdir]
+    __log notice "Copying source from $libdir to $tmpdir\
+                so as to be able to access binaries"
+        file copy -force $libdir [file dirname $tmpdir]
     }
-
+    
     # Finally, remove old possible installations for that binary.
     # This allows us not to pollute the temporary folder too much.
     foreach d [glob -nocomplain -directory $systmp -tails \
-		   "$AU(-tmppfx)${ourbin}_*"] {
-	if { $d ne "$AU(-tmppfx)${ourbin}_${unique}" } {
-	    __log notice "Removing old temporary binaries at $d"
-	    catch {file delete -force [file join $systmp $d]}
-	}
+            "$AU(-tmppfx)${ourbin}_*"] {
+        if { $d ne "$AU(-tmppfx)${ourbin}_${unique}" } {
+            __log notice "Removing old temporary binaries at $d"
+            catch {file delete -force [file join $systmp $d]}
+        }
     }
-
+    
     return $tmpdir
 }
 
@@ -560,12 +574,12 @@ proc ::argutil::__copytmp { libdir } {
 #	None.
 proc ::argutil::__isexec { fname } {
     global tcl_platform
-
+    
     set ext [string tolower [file extension $fname]]
     if { $tcl_platform(platform) == "unix" } {
-	return [expr {$ext == ".so" || [file executable $fname]}]
+        return [expr {$ext == ".so" || [file executable $fname]}]
     } else {
-	return [expr {$ext == ".exe" || $ext == ".dll"}]
+        return [expr {$ext == ".exe" || $ext == ".dll"}]
     }
     return 0; # Never reached
 }
@@ -574,16 +588,16 @@ proc ::argutil::__isexec { fname } {
 proc ::argutil::__forbidden { p } {
     variable AU
     global tcl_platform
-
+    
     if { $tcl_platform(platform) ne "windows" } {
-	# On UNIX-like systems, we don't want to start digging
-	# into the OS installed libraries.
-	set d [file dirname [file normalize $p]]
-	foreach ptn [list "/" "/usr" "/usr/lib*" "/var/lib*"] {
-	    if { [string match $ptn $d] } {
-		return 1
-	    }
-	}
+        # On UNIX-like systems, we don't want to start digging
+        # into the OS installed libraries.
+        set d [file dirname [file normalize $p]]
+        foreach ptn [list "/" "/usr" "/usr/lib*" "/var/lib*"] {
+            if { [string match $ptn $d] } {
+                return 1
+            }
+        }
     }
     return 0
 }
@@ -614,7 +628,7 @@ proc ::argutil::__forbidden { p } {
 proc ::argutil::searchlib { libname paths { version "" } } {
     variable AU
     global tcl_platform
-
+    
     __log debug "Looking for '$libname' in '$paths'"
     
     # Now, try to find the ones that contain a sub named $libname with a
@@ -622,117 +636,117 @@ proc ::argutil::searchlib { libname paths { version "" } } {
     set vernum ""
     set libdir ""
     if { $version == "" } {
-	# If version number was unspecified, look for the maximum one
-	# from the search path.  First, we look for directories which
-	# name match $libname* and list these in libpaths.
-	set libpaths ""
-	foreach p $paths {
-	    if { [__forbidden $p] } {
-		continue
-	    }
-	    set libpath [file join [resolve_links $p] "$libname"]
-	    append libpath "*"
-	    __log debug "Checking directory $libpath..."
-	    if { [catch {glob $libpath} paths] == 0 } {
-		foreach dir $paths {
-		    if { $tcl_platform(platform) ne "windows" \
-			     && [string match "*.lnk" [string tolower $dir]] } {
-			continue
-		    }
-		    # Resolve and normalize directory
-		    set rdir [resolve_links $dir]
-		    if { [catch {file normalize $rdir} ndir] == 0 } {
-			set rdir $ndir
-		    }
-		    if { [__forbidden $rdir] } {
-			    continue
-		    }
-		    if { [file exists $rdir]\
-			     && [lsearch $libpaths $rdir] < 0 } {
-			__log debug "Found possible directory: $rdir"
-			lappend libpaths $rdir
-		    }
-		}
-	    }
-	}
-	
-	# Then we extract the version number from the directory name
-	# and build an indexing list maxver_l into the directory
-	# list. We attempt to extract the version number simply by
-	# silently advancing to the first digit in the path and
-	# considering that all the remaining characters form the
-	# version number.
-	set maxver_l ""
-	set idx 0
-	foreach p $libpaths {
-	    # Find the name of the library in the path
-	    set l_idx [string last $libname $p]
-	    if { $l_idx >= 0 } {
-		# Advance to first non alpha character, the substring
-		# is the name of the library (as analyzed from the
-		# directory name)
-		set libnamefromdir [string range $p $l_idx end]
-
-		set unpackedname $libnamefromdir
-		foreach ext $AU(-packed) {
-		    if { [file extension $libnamefromdir] eq $ext } {
-			set unpackedname [file rootname $libnamefromdir]
-		    }
-		}
-		set rawlibname $unpackedname
-
-		set vercontainer [string map [list $libname ""] $unpackedname]
-		# Try to advance to first digit and consider all remaining
-		# characters (including the digit) as the version number
-		set v_num ""
-		for {set i 0} { $i < [string length $vercontainer] } {incr i} {
-		    if { [string is digit [string index $vercontainer $i]] } {
-			set v_num \
-			    [string trim [string range $vercontainer $i end]]
-			if { [regexp {^[_.\-\d]+$} $v_num] } {
-			    break
-			} else {
-			    # BACKTRACK, this wasn't a version but
-			    # rather a number in the middle of the
-			    # filename...
-			    set v_num ""
-			}
-		    }
-		}
-		__log debug "Analysed $libnamefromdir at v. $v_num from $p"
-
-		# If we found something that had a valid version
-		# number or if we found a library without any version
-		# number (strict match on the name) add it to the list
-		# of paths to consider.
-		__log debug "Found one match for $libname: $p, v. $v_num"
-		lappend maxver_l [list $v_num $idx]
-	    }
-	    incr idx
-	}
-	
-	# We sort the indexing list and the top index is the directory
-	# at the maximum version number.
-	if { [llength $maxver_l] > 0 } {
-	    set maxver_l [lsort -decreasing -index 0 $maxver_l]
-	    set vernum [lindex [lindex $maxver_l 0] 0]
-	    set libdir [lindex $libpaths [lindex [lindex $maxver_l 0] 1]]
-	}
+        # If version number was unspecified, look for the maximum one
+        # from the search path.  First, we look for directories which
+        # name match $libname* and list these in libpaths.
+        set libpaths ""
+        foreach p $paths {
+            if { [__forbidden $p] } {
+                continue
+            }
+            set libpath [file join [resolve_links $p] "$libname"]
+            append libpath "*"
+            __log debug "Checking directory $libpath..."
+            if { [catch {glob $libpath} paths] == 0 } {
+                foreach dir $paths {
+                    if { $tcl_platform(platform) ne "windows" \
+                                && [string match "*.lnk" [string tolower $dir]] } {
+                        continue
+                    }
+                    # Resolve and normalize directory
+                    set rdir [resolve_links $dir]
+                    if { [catch {file normalize $rdir} ndir] == 0 } {
+                        set rdir $ndir
+                    }
+                    if { [__forbidden $rdir] } {
+                        continue
+                    }
+                    if { [file exists $rdir]\
+                                && [lsearch $libpaths $rdir] < 0 } {
+                        __log debug "Found possible directory: $rdir"
+                        lappend libpaths $rdir
+                    }
+                }
+            }
+        }
+        
+        # Then we extract the version number from the directory name
+        # and build an indexing list maxver_l into the directory
+        # list. We attempt to extract the version number simply by
+        # silently advancing to the first digit in the path and
+        # considering that all the remaining characters form the
+        # version number.
+        set maxver_l ""
+        set idx 0
+        foreach p $libpaths {
+            # Find the name of the library in the path
+            set l_idx [string last $libname $p]
+            if { $l_idx >= 0 } {
+                # Advance to first non alpha character, the substring
+                # is the name of the library (as analyzed from the
+                # directory name)
+                set libnamefromdir [string range $p $l_idx end]
+                
+                set unpackedname $libnamefromdir
+                foreach ext $AU(-packed) {
+                    if { [file extension $libnamefromdir] eq $ext } {
+                        set unpackedname [file rootname $libnamefromdir]
+                    }
+                }
+                set rawlibname $unpackedname
+                
+                set vercontainer [string map [list $libname ""] $unpackedname]
+                # Try to advance to first digit and consider all remaining
+                # characters (including the digit) as the version number
+                set v_num ""
+                for {set i 0} { $i < [string length $vercontainer] } {incr i} {
+                    if { [string is digit [string index $vercontainer $i]] } {
+                        set v_num \
+                                [string trim [string range $vercontainer $i end]]
+                        if { [regexp {^[_.\-\d]+$} $v_num] } {
+                            break
+                        } else {
+                            # BACKTRACK, this wasn't a version but
+                            # rather a number in the middle of the
+                            # filename...
+                            set v_num ""
+                        }
+                    }
+                }
+                __log debug "Analysed $libnamefromdir at v. $v_num from $p"
+                
+                # If we found something that had a valid version
+                # number or if we found a library without any version
+                # number (strict match on the name) add it to the list
+                # of paths to consider.
+                __log debug "Found one match for $libname: $p, v. $v_num"
+                lappend maxver_l [list $v_num $idx]
+            }
+            incr idx
+        }
+        
+        # We sort the indexing list and the top index is the directory
+        # at the maximum version number.
+        if { [llength $maxver_l] > 0 } {
+            set maxver_l [lsort -decreasing -index 0 $maxver_l]
+            set vernum [lindex [lindex $maxver_l 0] 0]
+            set libdir [lindex $libpaths [lindex [lindex $maxver_l 0] 1]]
+        }
     } else {
-	# If the version number was forced from the outside, look for
-	# these directories only.
-	foreach p $paths {
-	    set libpath [resolve_links [file join $p "${libname}${version}"]]
-	    if { [file isdirectory $libpath] } {
-		set libdir $libpath
-		set vernum $version
-		break
-	    }
-	}
+        # If the version number was forced from the outside, look for
+        # these directories only.
+        foreach p $paths {
+            set libpath [resolve_links [file join $p "${libname}${version}"]]
+            if { [file isdirectory $libpath] } {
+                set libdir $libpath
+                set vernum $version
+                break
+            }
+        }
     }
-
+    
     __log info "Found $libname in $libdir at version $vernum"
-
+    
     return [list "$vernum" $libdir]
 }
 
@@ -766,87 +780,87 @@ proc ::argutil::accesslib { libname { version "" } { first 0 } } {
     global auto_path tcl_platform argv0
     variable libdir
     variable AU
-
+    
     # Build a list of library path from within which we should look
     # for a $libname sub directory.
     set path_search {}
     foreach rd $AU(-rootdirs) {
-	set rd [string map [list %scriptdir% $libdir \
-				%progdir% [file dirname $argv0] \
-				%libdir% [info library]] $rd]
-	foreach d $AU(-searchdirs) {
-	    lappend path_search [file join $rd $d]
-	}
+        set rd [string map [list %scriptdir% $libdir \
+                %progdir% [file dirname $argv0] \
+                %libdir% [info library]] $rd]
+        foreach d $AU(-searchdirs) {
+            lappend path_search [file join $rd $d]
+        }
     }
-
+    
     # Find library in search path
     foreach {vernum libdir} [searchlib $libname $path_search $version] break
-
+    
     # Automatically unwrap library directories that contain dynamic
     # libraries or executables, and see to load the library from there
     # instead.
     if { $libdir != "" && [string is true $AU(-autounwrap)] } {
-	if { [info exists ::starkit::topdir] } {
-	    if { [catch {package require fileutil}] == 0 } {
-		set binaries [::fileutil::find $libdir ::argutil::__isexec]
-		if {0 } {
-		set binaries [::fileutil::findByPattern $libdir -regexp -- \
-				  "(dll|so|exe)$"]
-		}
-		if { [llength $binaries] > 0 } {
-		    # Force the directory to be first in the auto
-		    # loading path, so as to be sure to get hold of
-		    # the local copy.
-		    set first 1
-		    set libdir [__copytmp $libdir]
-		}
-	    } else {
-		__log warn "Cannot find fileutil, will not unwrap $libdir\
-                            if necessary"
-	    }
-	}
+        if { [info exists ::starkit::topdir] } {
+            if { [catch {package require fileutil}] == 0 } {
+                set binaries [::fileutil::find $libdir ::argutil::__isexec]
+                if {0 } {
+                    set binaries [::fileutil::findByPattern $libdir -regexp -- \
+                            "(dll|so|exe)$"]
+                }
+                if { [llength $binaries] > 0 } {
+                    # Force the directory to be first in the auto
+                    # loading path, so as to be sure to get hold of
+                    # the local copy.
+                    set first 1
+                    set libdir [__copytmp $libdir]
+                }
+            } else {
+        __log warn "Cannot find fileutil, will not unwrap $libdir\
+                        if necessary"
+            }
+        }
     }
-
+    
     # If we have found one directory with the $libname, add it to our
     # search path and return the version number.
     set added_dirs ""
     if { $libdir != "" } {
-	if { [catch "file normalize $libdir" fullpath] != 0 } {
-	    set fullpath $libdir
-	}
-	
-	set platform_dirs [list \
-			       [file join $fullpath $tcl_platform(platform)] \
-			       [file join $fullpath [platform]]]
-	foreach d $platform_dirs {
-	    if { [file exists $d] && [file isdirectory $d] } {
-		if { $first } {
-		    set auto_path [linsert $auto_path 1 $d]
-		} else {
-		    lappend auto_path $d
-		}
-		if { [catch {::tcl::tm::add $d} err] } {
-		    __log warn "Could not add $d to module path: $err"
-		}
-		lappend added_dirs $d
-	    }
-	}
-
-	if { [llength $added_dirs] == 0 } {
-	    if { $first } {
-		set auto_path [linsert $auto_path 0 $fullpath]
-	    } else {
-		lappend auto_path $fullpath
-	    }
-	    if { [catch {::tcl::tm::add $fullpath} err] } {
-		__log warn "Could not add $fullpath to module path: $err"
-	    }
-	    lappend added_dirs $fullpath
-	}
-
-	__log info "Added $added_dirs to auto loading path"
+        if { [catch "file normalize $libdir" fullpath] != 0 } {
+            set fullpath $libdir
+        }
+        
+        set platform_dirs [list \
+                [file join $fullpath $tcl_platform(platform)] \
+                [file join $fullpath [platform]]]
+        foreach d $platform_dirs {
+            if { [file exists $d] && [file isdirectory $d] } {
+                if { $first } {
+                    set auto_path [linsert $auto_path 1 $d]
+                } else {
+                    lappend auto_path $d
+                }
+                if { [catch {::tcl::tm::add $d} err] } {
+                    __log warn "Could not add $d to module path: $err"
+                }
+                lappend added_dirs $d
+            }
+        }
+        
+        if { [llength $added_dirs] == 0 } {
+            if { $first } {
+                set auto_path [linsert $auto_path 0 $fullpath]
+            } else {
+                lappend auto_path $fullpath
+            }
+            if { [catch {::tcl::tm::add $fullpath} err] } {
+                __log warn "Could not add $fullpath to module path: $err"
+            }
+            lappend added_dirs $fullpath
+        }
+        
+        __log info "Added $added_dirs to auto loading path"
     }
-
+    
     return [list $vernum $added_dirs]
 }
 
@@ -872,11 +886,11 @@ proc ::argutil::accesslib { libname { version "" } { first 0 } } {
 #	the boolean and is initialised correctly.
 proc ::argutil::boolean { a_name_p a_index } {
     upvar $a_name_p a_name
-
+    
     if { [array names a_name $a_index] == $a_index } {
-	set a_name($a_index) 1
+        set a_name($a_index) 1
     } else {
-	set a_name($a_index) 0
+        set a_name($a_index) 0
     }
 }
 
@@ -900,7 +914,7 @@ proc ::argutil::makelist { var_p } {
     upvar $var_p var
     
     if { [string index $var 0] == "\{" } {
-	set var [string range $var 1 end-1]
+        set var [string range $var 1 end-1]
     }
 }
 
@@ -928,43 +942,43 @@ proc ::argutil::makelist { var_p } {
 proc ::argutil::loadmodules { modules { verbose "" } } {
     # Make sure the verbosity specification is a list.
     makelist verbose
-
+    
     # Require all modules to load them into memory.
     set vernums ""
     foreach module $modules {
-	lappend vernums [package require $module]
-	__log info "Loaded package $module, v. [lindex $vernums end]"
+        lappend vernums [package require $module]
+        __log info "Loaded package $module, v. [lindex $vernums end]"
     }
     
     if { $verbose ne "" } {
-	if { [llength $verbose] == 1 } {
-	    # If verbose contains one argument only, tell all modules to
-	    # be at that level, do this only if they support the loglevel
-	    # command.
-	    foreach module $modules {
-		if { [info commands ::${module}::loglevel] != "" } {
-		    ::${module}::loglevel $verbose
-		    __log debug "Setting log level of $module to $verbose"
-		} else {
-		    __log warn "Cannot change loglevel for $module to $verbose"
-		}
-	    }
-	} else {
-	    # Otherwise do this specifically for each module which name
-	    # was present in the verbose list.
-	    for { set i 0 } { $i < [llength $verbose] } { incr i 2 } {
-		set module [lindex $verbose $i]
-		set level [lindex $verbose [expr $i + 1]]
-		if { [info commands ::${module}::loglevel] != "" } {
-		    ::${module}::loglevel $level
-		    __log debug "Setting log level of $module to $verbose"
-		} else {
-		    __log warn "Cannot change loglevel for $module to $verbose"
-		}
-	    }
-	}
+        if { [llength $verbose] == 1 } {
+            # If verbose contains one argument only, tell all modules to
+            # be at that level, do this only if they support the loglevel
+            # command.
+            foreach module $modules {
+                if { [info commands ::${module}::loglevel] != "" } {
+                    ::${module}::loglevel $verbose
+                    __log debug "Setting log level of $module to $verbose"
+                } else {
+                    __log warn "Cannot change loglevel for $module to $verbose"
+                }
+            }
+        } else {
+            # Otherwise do this specifically for each module which name
+            # was present in the verbose list.
+            for { set i 0 } { $i < [llength $verbose] } { incr i 2 } {
+                set module [lindex $verbose $i]
+                set level [lindex $verbose [expr $i + 1]]
+                if { [info commands ::${module}::loglevel] != "" } {
+                    ::${module}::loglevel $level
+                    __log debug "Setting log level of $module to $verbose"
+                } else {
+                    __log warn "Cannot change loglevel for $module to $verbose"
+                }
+            }
+        }
     }
-
+    
     return $vernums
 }
 
@@ -989,22 +1003,22 @@ proc ::argutil::loadmodules { modules { verbose "" } } {
 #	Will actively modify the array
 proc ::argutil::initargs { array_p optdescr } {
     upvar $array_p array
-
+    
     set inits ""
     foreach optspec $optdescr {
-	set prm [lindex $optspec 0]
-	set dot [string first "." $prm]
-	if { $dot >= 0 } {
-	    set key [string range $prm 0 [expr {$dot - 1}]]
-	    if { [regexp "^.*\\.arg$" $prm] \
-		     || [regexp "^.*\\.\\(.*\\)$" $prm] } {
-		__log debug "Initialised ${array_p}($key) to empty string"
-		set array($key) ""
-		lappend inits $key
-	    }
-	}
+        set prm [lindex $optspec 0]
+        set dot [string first "." $prm]
+        if { $dot >= 0 } {
+            set key [string range $prm 0 [expr {$dot - 1}]]
+            if { [regexp "^.*\\.arg$" $prm] \
+                        || [regexp "^.*\\.\\(.*\\)$" $prm] } {
+                __log debug "Initialised ${array_p}($key) to empty string"
+                set array($key) ""
+                lappend inits $key
+            }
+        }
     }
-
+    
     return $inits
 }
 
@@ -1026,15 +1040,15 @@ proc ::argutil::initargs { array_p optdescr } {
 proc ::argutil::options { optdescr } {
     set options [list]
     foreach optspec $optdescr {
-	set prm [lindex $optspec 0]
-	set dot [string first "." $prm]
-	if { $dot >= 0 } {
-	    lappend options [string range $prm 0 [expr {$dot - 1}]]
-	} else {
-	    lappend options $prm
-	}
+        set prm [lindex $optspec 0]
+        set dot [string first "." $prm]
+        if { $dot >= 0 } {
+            lappend options [string range $prm 0 [expr {$dot - 1}]]
+        } else {
+            lappend options $prm
+        }
     }
-
+    
     return $options
 }
 
@@ -1055,51 +1069,52 @@ proc ::argutil::options { optdescr } {
 #	Will actively modify the output procedure in the logger module.
 proc ::argutil::fix_outlog { { services {} } } {
     variable AU
-
+    
     if { [llength $services] == 0 } {
-	set services [::logger::services]
+        set services [::logger::services]
     }
-
+    
     # For all the services, declare a number of output procedures (one
     # for each log level supported by the module, and see to install
     # this procedure as the log procedure for that level.
     if { [info commands ::logger::servicecmd] ne "" } {
-	foreach svc $services {
-	    foreach lvl [::logger::levels] {
-		set procname "[::logger::servicecmd $svc]::__AUout_$lvl"
-		set procdecl "proc $procname { txt } \{ ::argutil::__out $svc $lvl \$txt \}"
-		eval $procdecl
-		set root [::logger::servicecmd $svc]
-		${root}::logproc $lvl ${root}::__AUout_$lvl
-	    }
-	}
-	__log info "Fixed log output for services: $services"
+        foreach svc $services {
+            foreach lvl [::logger::levels] {
+                set procname "[::logger::servicecmd $svc]::__AUout_$lvl"
+                set procdecl "proc $procname { txt } \{ ::argutil::__out $svc $lvl \$txt \}"
+                eval $procdecl
+                set root [::logger::servicecmd $svc]
+                ${root}::logproc $lvl ${root}::__AUout_$lvl
+            }
+        }
+        __log info "Fixed log output for services: $services"
     }
-
+    
     return $services
 }
 
 proc ::argutil::unwrap { wrapbin } {
     variable AU
-
+    
     set rawname [file tail $wrapbin]
     set dstbin [file join [::diskutil::platform_tmp] $rawname]
-
+    
     if { [file exists $dstbin] } {
-	if { [file size $dstbin] == [file size $wrapbin] } {
-	    set shouldcopy 0
-	} else {
-	    set shouldcopy 1
-	}
+        if { [file size $dstbin] == [file size $wrapbin] } {
+            set shouldcopy 0
+        } else {
+            set shouldcopy 1
+        }
     } else {
-	set shouldcopy 1
+        set shouldcopy 1
     }
     if { $shouldcopy } {
-	__log info "Copying wrapped binary $wrapbin to $dstbin"
-	if { [catch {file copy -force -- $wrapbin $dstbin} err] } {
-	    __log error "Could not copy $wrapbin into $dstbin: $err"
-	    return ""
-	}
+        __log info "Copying wrapped binary $wrapbin to $dstbin"
+        if { [catch {file copy -force -- $wrapbin $dstbin} err] } {
+            __log error "Could not copy $wrapbin into $dstbin: $err"
+            return ""
+        }
     }
     return $dstbin
 }
+
