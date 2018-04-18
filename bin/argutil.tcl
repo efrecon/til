@@ -946,7 +946,15 @@ proc ::argutil::loadmodules { modules { verbose "" } } {
     # Require all modules to load them into memory.
     set vernums ""
     foreach module $modules {
-        lappend vernums [package require $module]
+        if { [string first ":" $module] >= 0 } {
+            foreach {module version} [split $module ":"] break
+            lappend vernums [package require $module $version]
+        } elseif { [string first "!" $module] >= 0 } {
+            foreach {module version} [split $module "!"] break
+            lappend vernums [package require -exact $module $version]
+        } else {
+            lappend vernums [package require $module]
+        }
         __log info "Loaded package $module, v. [lindex $vernums end]"
     }
     
