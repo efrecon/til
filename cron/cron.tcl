@@ -191,7 +191,7 @@ proc ::cron::__check { id { nxcheck "" } { now "" } } {
 		 && [::cron::__fieldmatch $month $Entry(month)] \
 		 && [::cron::__fieldmatch $dayweek $Entry(dayweek)] } {
 	    ${log}::info "Triggering entry $id - $Entry(cmd)"
-	    uplevel \#0 $Entry(cmd) $now $Entry(args)
+	    uplevel \#0 [linsert $Entry(args) 0 $Entry(cmd) $now]
 	    set triggered 1
 	}
 
@@ -297,7 +297,7 @@ proc ::cron::checkonce { date { entries "" } } {
 #
 # Side Effects:
 #	None.
-proc ::cron::add { min hour daymonth month dayweek cmdproc { args "" } } {
+proc ::cron::add { min hour daymonth month dayweek cmdproc args } {
     variable CRON
     variable log
 

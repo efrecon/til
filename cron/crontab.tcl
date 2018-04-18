@@ -74,7 +74,7 @@ proc ::crontab::__proccall { when pname args } {
     variable log
 
     ${log}::info "Calling procedure $pname $args"
-    catch "eval $pname $args" result
+    catch [eval [linsert $args 0 $pname]] result
     ${log}::info "Procedure $pname returned $result"
 }
 
