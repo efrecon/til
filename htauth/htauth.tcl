@@ -35,7 +35,6 @@ namespace eval ::htauth {
 	    -resolver ""
 	}
 	variable version 0.1
-	variable libdir [file dirname [file normalize [info script]]]
 	::uobj::install_log htauth AUTH
 	::uobj::install_defaults htauth AUTH
     }
