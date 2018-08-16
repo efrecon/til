@@ -13,6 +13,7 @@
 package require Tcl 8.4
 package require logger
 package require diskutil
+package require compatibility
 
 namespace eval ::uobj {
     variable UOBJ
@@ -30,28 +31,6 @@ namespace eval ::uobj {
         ${log}::setlevel $UOBJ(loglevel)
     }
     namespace export loglevel
-}
-
-
-# ::uobj::lassign -- Assign variables from values in list
-#
-#	This is an implementation of lassign for older version of tcl
-#
-# Arguments:
-#	values	list of values
-#	args	variables to set to each item of the value list.
-#
-# Results:
-#	If there are more list elements than variables, a list of unassigned
-#	elements is returned.
-#
-# Side Effects:
-#	None.
-if {[catch {lassign {}}]} {
-   proc ::uobj::lassign {values args} {
-       uplevel 1 [list foreach $args [linsert $values end {}] break]
-       lrange $values [llength $args] end
-   }
 }
 
 
@@ -1297,4 +1276,3 @@ proc ::uobj::resolve { o path { override {} } } {
 
 
 package provide uobj 0.5
-
