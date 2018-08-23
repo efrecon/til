@@ -188,7 +188,7 @@ if { [package vcompare [package provide Tcl] 8.5] < 0 } {
                 return $list
             }
         }
-        return [eval linsert $args 0 lset_ori list]
+        return [eval linsert $args 0 lset_orig list]
     }
 } else {
     proc ::compatibility::lset {lname args} {
@@ -216,11 +216,12 @@ if { [package vcompare [package provide Tcl] 8.5] < 0 } {
                 return $list
             }
         }
-        return [lset_ori list {*}$args]
+        return [lset_orig list {*}$args]
     }
 }
 
 
+# From https://wiki.tcl.tk/55467, requires 8.5
 proc ::compatibility::try {args} {
     # Require at least one argument.
     if {![llength $args]} {
@@ -342,6 +343,237 @@ proc ::compatibility::throw {type message} {
     }
 }
 
+# From https://wiki.tcl.tk/55468
+proc ::compatibility::prefix {subcommand args} {
+    switch $subcommand {
+    a - al - all {
+        # Process arguments.
+        if {[llength $args] != 2} {
+            throw {TCL WRONGARGS} "wrong # args: should be\
+                    \"tcl::prefix all table string\""
+        }
+        lassign $args table string
+
+        # Return list of all strings with the given prefix.
+        lsearch -all -inline $table [regsub -all {[][?*\\]} $string {\\&}]*
+    } l - lo - lon - long - longe - longes - longest {
+        # Process arguments.
+        if {[llength $args] != 2} {
+            throw {TCL WRONGARGS} "wrong # args: should be\
+                    \"tcl::prefix longest table string\""
+        }
+        lassign $args table string
+
+        # Search for the longest common prefix.
+        foreach entry $table {
+            if {[string equal -length [string length $string] $entry $string]} {
+                if {![info exists common]} {
+                    set common $entry
+                } else {
+                    for {set i 0} {$i < [string length $common]
+                                && $i < [string length $entry]} {incr i} {
+                        if {[string index $common $i]
+                         ne [string index $entry $i]} {
+                            break
+                        }
+                    }
+                    set common [string range $common 0 [expr {$i - 1}]]
+                }
+            }
+        }
+
+        # Return the longest common prefix, or empty string if no matches.
+        if {[info exists common]} {
+            return $common
+        }
+    } m - ma - mat - matc - match {
+        # Process arguments.
+        if {[llength $args] < 2} {
+            throw {TCL WRONGARGS} "wrong # args: should be\
+                    \"tcl::prefix match ?options? table string\""
+        }
+        lassign [lrange $args end-1 end] table string
+        set args [lrange $args 0 end-2]
+        set message option
+        while {[llength $args]} {
+            set args [lassign $args arg]
+            switch $arg {
+            -ex - -exa - -exac - -exact {
+                # -exact switch.
+                set exact {}
+            } -m - -me - -mes - -mess - -messa - -messag - -message {
+                # -message switch.  Next argument is the message string.
+                if {![llength $args]} {
+                    throw {TCL OPERATION NOARG} "missing value for -message"
+                }
+                set args [lassign $args message]
+            } -er - -err - -erro - -error {
+                # -error switch.  Next argument is the error options dict.
+                if {![llength $args]} {
+                    throw {TCL OPERATION NOARG} "missing value for -error"
+                }
+                set args [lassign $args options]
+                if {[llength $options] & 1} {
+                    throw {TCL VALUE DICTIONARY} "error options must have an\
+                            even number of elements"
+                }
+            } -e {
+                # Ambiguous switch.
+                throw [list TCL LOOKUP INDEX option $arg] "ambiguous option\
+                        \"$arg\": must be -error, -exact, or -message"
+            } default {
+                # Invalid switch.
+                throw [list TCL LOOKUP INDEX option $arg] "bad option\
+                        \"$arg\": must be -error, -exact, or -message"
+            }}
+        }
+
+        # Always accept exact match, no questions asked, even if it happens to
+        # also be the prefix for another string in the table.
+        if {$string in $table} {
+            return $string
+        }
+
+        # Attempt prefix matching unless -exact was used.  Accept a prefix match
+        # if unambiguous.
+        if {![info exists exact]} {
+            set matches [prefix all $table $string]
+            if {[llength $matches] == 1} {
+                return [lindex $matches 0]
+            }
+        }
+
+        # Match failed.  Assemble and return the error result.
+        if {![info exists exact] && [llength $matches]} {
+            set message "ambiguous $message \"$string\": "
+        } else {
+            set message "bad $message \"$string\": "
+        }
+        if {![llength $table]} {
+            append message "no valid options"
+        } else {
+            if {[llength $table] > 1} {
+                lset table end "or [lindex $table end]"
+            }
+            append message "must be [join $table\
+                    {*}[if {[llength $table] > 2} {list ", "}]]"
+        }
+        if {![info exists options]} {
+            set options [list -level 0 -code error\
+                    -errorcode [list TCL LOOKUP INDEX $message $string]]
+        }
+        if {![dict size $options]} {
+            set message {}
+        } elseif {![dict exists $options -code]} {
+            dict set options -code error
+        }
+        dict incr options -level
+        return [linsert end $options $message]
+    } default {
+        # Invalid subcommand.
+        throw [list TCL LOOKUP SUBCOMMAND $arg] "unknown or ambiguous\
+                subcommand \"$arg\": must be all, longest, or match"
+    }}
+}
+
+# Adapted from https://wiki.tcl.tk/55469 to work without {*}
+proc ::compatibility::lsort {args} {
+    # Process arguments.
+    set pass {}
+    if {![llength $args]} {
+        throw {TCL WRONGARGS} "wrong # args: should be\
+                \"lsort ?-option value ...? list\""
+    }
+    set list [lindex $args end]
+    set args [lrange $args 0 end-1]
+    while {[llength $args]} {
+        set args [lassign $args arg]
+        switch [tcl::prefix match {
+            -ascii -command -decreasing -dictionary -increasing -index -indices
+            -integer -nocase -real -stride -unique
+        } $arg] {
+        -command {
+            if {![llength $args]} {
+                throw {TCL ARGUMENT MISSING} "\"-command\" option must be\
+                        followed by comparison command"
+            }
+            lappend pass $arg [lindex $args 0]
+            set args [lrange $args 1 end]
+        } -index {
+            if {![llength $args]} {
+                throw {TCL ARGUMENT MISSING} "\"-index\" option must be\
+                        followed by list index"
+            }
+            set args [lassign $args index]
+        } -stride {
+            if {![llength $args]} {
+                throw {TCL ARGUMENT MISSING} "\"-stride\" option must be\
+                        followed by stride length"
+            }
+            set args [lassign $args stride]
+        } default {
+            lappend pass $arg
+        }}
+    }
+
+    if {[info exists stride]} {
+        # Validate -stride and -index.
+        if {![string is integer -strict $stride]} {
+            throw {TCL VALUE NUMBER} "expected integer but got \"$stride\""
+        } elseif {$stride < 2} {
+            throw {TCL OPERATION LSORT BADSTRIDE} "stride length must be at\
+                    least 2"
+        } elseif {[llength $list] % $stride} {
+            throw {TCL OPERATION LSORT BADSTRIDE} "list size must be a multiple\
+                    of the stride length"
+        } elseif {![info exists index]} {
+            set index 0
+        } elseif {$index < 0 || $index > $stride} {
+            throw {TCL OPERATION LSORT BADINDEX} "when used with \"-stride\",\
+                    the leading \"-index\" value must be within the group"
+        }
+
+        # Build a nested list grouped by stride.
+        set newList {}
+        for {set i 0} {$i < [llength $list]} {incr i $stride} {
+            lappend newList [lrange $list $i [expr {$i + $stride - 1}]]
+        }
+
+        # Sort the list without using -stride, then flatten the nested result.
+        set cmd [linsert $pass 0 lsort_orig -index $index]
+        lappend cmd $newList
+        return [concat [eval $cmd]]
+    } else {
+        # When not using -stride, call the base implementation directly.
+        if { [info exists index] } {
+            set cmd [linsert $pass 0 lsort_orig -index $index]
+        } else {
+            set cmd [linsert $pass 0 lsort_orig]
+        }
+        lappend cmd $list
+        return [eval $cmd]
+    }
+}
+
+
+# From https://wiki.tcl.tk/37114
+proc ::compatibility::dict_map {keyVarValueVar dictionary script} {
+    # Confirm argument syntax.
+    if {[llength $keyVarValueVar] != 2} {
+        return -code error "must have exactly two variable names"
+    }
+
+    # Link to local variables which will be used as iterators.
+    upvar 1 [lindex $keyVarValueVar 0] key [lindex $keyVarValueVar 1] val
+
+    # Accumulate and return the result.
+    ::set result {}
+    foreach {key val} [get $dictionary] {
+        ::lappend result $key [uplevel 1 $script]
+    }
+    return $result
+}
+
 # ::compatibility::check -- Install forward compatible implementations
 #
 #	Installs a number of forward compatible command implementation in pure Tcl
@@ -357,11 +589,31 @@ proc ::compatibility::throw {type message} {
 #
 # Side Effects:
 #	None.
-proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try}} } {
+proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try tcl::prefix lsort dict::map}} } {
     variable log
 
+    # Declare dependencies between the commands
+    array set depends {
+        throw       { try }
+        tcl::prefix { lassign dict throw }
+        lsort       { lassign throw tcl::prefix }
+        dict::map   { dict }
+    }
+
+    # Arrange to create a new list of commands that includes the dependencies,
+    # i.e. whenever a command depends on others and is required, arrange for the
+    # commands that it depends upon to be first in the list. This construct a
+    # list that is too long, but we'll sort it before using it.
+    set withdepends $cmds
+    foreach c $cmds {
+        if { [info exists depends($c)] } {
+            set withdepends [concat $depends($c) $withdepends]
+        }
+    }
+
+    # Now install compatibility commands.
     set compat [list]
-    foreach cmd $cmds {
+    foreach cmd [::lsort -unique $withdepends] {
         switch -- $cmd {
             "lassign" {
                 if {[catch {lassign {}}]} {
@@ -381,7 +633,7 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try}}
             "lreverse" {
                 if {[catch {lreverse {}}]} {
                     ${log}::notice "Installing forward compatible version of $cmd"
-                    interp alias {} ::lmap {} ::compatibility::lmap
+                    interp alias {} ::lreverse {} ::compatibility::lreverse
                     lappend compat $cmd
                 }
             }
@@ -407,12 +659,8 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try}}
                     # Trying package from tcllib first, otherwise internal
                     # implementation coming from wiki
                     if { [catch {package require throw}]} {
-                        if { [package vcompare [package provide Tcl] 8.5] > 0 } {
-                            interp alias {} ::throw {} ::compatibility::throw
-                            lappend compat $cmd
-                        } else {
-                            ${log}::warn "No implementation of $cmd for Tcl version [package provide Tcl]"
-                        }
+                        interp alias {} ::throw {} ::compatibility::throw
+                        lappend compat $cmd
                     } else {
                         lappend compat $cmd
                     }
@@ -435,7 +683,28 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try}}
                     }
                 }
             }
-
+            "tcl::prefix" {
+                if {[catch {::tcl::prefix all {} ""}]} {
+                    ${log}::notice "Installing forward compatible version of $cmd"
+                    interp alias {} ::tcl::prefix {} ::compatibility::prefix
+                    lappend compat $cmd
+                }
+            }
+            "lsort" {
+                if {[catch {lsort -stride 2 {}}]} {
+                    ${log}::notice "Installing forward compatible version of $cmd"
+                    rename ::lsort ::compatibility::lsort_orig
+                    interp alias {} ::lsort {} ::compatibility::lsort
+                    lappend compat $cmd
+                }
+            }
+            "dict::map" {
+                if {[catch {dict map {a b} {} {}}]} {
+                    ${log}::notice "Installing forward compatible version of $cmd"
+                    namespace ensemble configure ::dict -map [dict replace\
+                            [namespace ensemble configure ::dict -map] map ::compatibility::dict_map]                }
+                    lappend compat $cmd
+            }
         }
     }
 
