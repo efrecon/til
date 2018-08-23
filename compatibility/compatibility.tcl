@@ -430,7 +430,7 @@ proc ::compatibility::prefix {subcommand args} {
 
         # Always accept exact match, no questions asked, even if it happens to
         # also be the prefix for another string in the table.
-        if {$string in $table} {
+        if {[lsearch $table $string]>=0} {
             return $string
         }
 
