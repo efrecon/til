@@ -602,8 +602,7 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try t
 
     # Arrange to create a new list of commands that includes the dependencies,
     # i.e. whenever a command depends on others and is required, arrange for the
-    # commands that it depends upon to be first in the list. This construct a
-    # list that is too long, but we'll sort it before using it.
+    # commands that it depends upon to be first in the list.
     set withdepends $cmds
     foreach c $cmds {
         if { [info exists depends($c)] } {
@@ -611,9 +610,18 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try t
         }
     }
 
+    # Shorten the list to unique commands only
+    set totest {}
+    foreach c $withdepends {
+        if { [lsearch $totest $c] < 0 } {
+            lappend totest $c
+        }
+    }
+
     # Now install compatibility commands.
     set compat [list]
-    foreach cmd [::lsort -unique $withdepends] {
+    foreach cmd $totest {
+        ${log}::info "Testing if forward-compatible '$cmd' is necessary"
         switch -- $cmd {
             "lassign" {
                 if {[catch {lassign {}}]} {
@@ -704,6 +712,9 @@ proc ::compatibility::check { {cmds {lassign lmap lreverse lset dict throw try t
                     namespace ensemble configure ::dict -map [dict replace\
                             [namespace ensemble configure ::dict -map] map ::compatibility::dict_map]                }
                     lappend compat $cmd
+            }
+            default {
+                ${log}::warn "No implementation for $cmd"
             }
         }
     }
